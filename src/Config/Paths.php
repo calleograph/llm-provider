@@ -14,9 +14,12 @@ final class Paths
         return dirname(__DIR__, 2);
     }
 
+    /** В контейнере каталог данных — отдельный том (APP_VAR_DIR), вне кода и образа. */
     public static function var(): string
     {
-        return self::root() . '/var';
+        $dir = getenv('APP_VAR_DIR');
+
+        return is_string($dir) && $dir !== '' ? rtrim($dir, '/') : self::root() . '/var';
     }
 
     public static function data(): string

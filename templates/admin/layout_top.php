@@ -21,13 +21,16 @@ $sectionGroups = [
     ],
     'Нейросети' => [
         'llm_providers' => ['label' => 'Подключения LLM API', 'url' => 'index.php?section=llm_providers'],
+        'llm_models' => ['label' => 'Модели и резервирование', 'url' => 'index.php?section=llm_models'],
         'llm_limits' => ['label' => 'Категории лимитов', 'url' => 'index.php?section=llm_limits'],
     ],
     'Пользователи' => [
         'llm_users' => ['label' => 'Пользователи чата', 'url' => 'index.php?section=llm_users'],
     ],
     'Система' => [
-        'anonymization' => ['label' => 'API обезличивания', 'url' => 'index.php?section=anonymization'],
+        'anonymization' => ['label' => 'Обезличивание', 'url' => 'index.php?section=anonymization'],
+        'mail' => ['label' => 'Почта и уведомления', 'url' => 'index.php?section=mail'],
+        'maintenance' => ['label' => 'Обслуживание и состояние', 'url' => 'index.php?section=maintenance'],
         'log' => ['label' => 'Журналы', 'url' => 'index.php?section=log'],
         'system' => ['label' => 'Настройки', 'url' => 'index.php?section=system'],
     ],
@@ -66,7 +69,7 @@ $settingsIndex = array_values(array_filter(
 <title><?php echo View::e($pageTitle); ?> — Администрирование</title>
 <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
 <link rel="icon" type="image/png" href="../assets/favicon.png">
-<link rel="stylesheet" href="../assets/css/app.css">
+<link rel="stylesheet" href="<?php echo \App\Http\View::asset('../assets/css/app.css'); ?>">
 </head>
 <body>
 <div class="admin-shell">

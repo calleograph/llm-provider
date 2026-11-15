@@ -14,6 +14,9 @@ use App\Llm\Files\FileProcessor;
 use App\Llm\Files\StagedFile;
 use App\Llm\Gateway\LlmException;
 use App\Llm\Gateway\LlmGateway;
+use App\Llm\Context\ContextBuilder;
+use App\Llm\Context\ContextOverflowException;
+use App\Llm\Context\SummaryService;
 use App\Llm\LlmEventLog;
 
 /**
@@ -50,6 +53,8 @@ final class ChatService
         private readonly ProjectRepository $projects,
         private readonly UsageLimiter $usage,
         private readonly StorageQuotaService $storageQuota,
+        private readonly \App\Llm\Provider\ModelRepository $models,
+        private readonly ?SummaryService $summaries = null,
         // false — только в тестах: источник не из $_FILES (copy вместо move_uploaded_file).
         private readonly bool $isHttpUpload = true,
     ) {
@@ -66,7 +71,7 @@ final class ChatService
      * @return array{conversation:array{id:int,title:string,provider_id:int},user_message:array<string,mixed>,assistant_message:array<string,mixed>}
      * @throws ChatException
      */
-    public function send(ChatUser $user, string $ip, ?int $conversationId, int $providerId, string $text, array $uploads, ?int $projectId = null, bool $skipAnonymization = false): array
+    public function send(ChatUser $user, string $ip, ?int $conversationId, int $providerId, string $text, array $uploads, ?int $projectId = null, bool $skipAnonymization = false, ?int $modelId = null): array
     {
         if (count($uploads) > self::MAX_UPLOADS) {
             throw new ChatException('too_many_files', 'Можно приложить не более ' . self::MAX_UPLOADS . ' файлов за раз.');
@@ -93,6 +98,13 @@ final class ChatService
             throw new ChatException('access_denied', 'Выбранная нейросеть вам недоступна.', 403);
         }
         $providerName = $allowed[$providerId]['name'];
+        // Модель: явно выбранная (должна принадлежать провайдеру) или модель провайдера по умолчанию.
+        $allowedModels = $this->models->allowedFor($allowed);
+        $modelId ??= $this->models->defaultFor($providerId);
+        if ($modelId === null || !isset($allowedModels[$modelId]) || $allowedModels[$modelId]['provider_id'] !== $providerId) {
+            $this->events->user($ip, $log, LlmEventLog::OP_CHAT, 'LLM_ACCESS_DENIED', ['provider_id' => $providerId, 'model_id' => $modelId]);
+            throw new ChatException('access_denied', 'Выбранная модель вам недоступна.', 403);
+        }
 
         $conversation = null;
         if ($conversationId !== null) {
@@ -132,13 +144,29 @@ final class ChatService
         // после обработки каждого. Если упадёт файл номер N — предыдущие
         // не сохраняются: send() либо целиком успевает, либо целиком
         // откатывается (ничего не уходит наружу и не пишется в историю).
-        $files = [];
-        foreach ($uploads as $upload) {
-            $files[] = $skipAnonymization
-                ? $this->handleUploadRaw($user, $ip, $upload)
-                : $this->handleUpload($user, $ip, $upload);
+        if ($skipAnonymization || $this->anonymizer->supportsBatch()) {
+            // Встроенный сервис: сначала локальное извлечение всех вложений, затем текст
+            // и вложения — ОДНИМ вызовом обезличивания (одна сессия замен: один человек —
+            // одно обозначение в сообщении и во всех файлах). Без обезличивания — только
+            // маскирование секретов, тоже одним вызовом.
+            $files = array_map(fn (array $upload): object => $this->extractUpload($user, $ip, $upload, $skipAnonymization ? 'extracted_unanonymized' : 'extracted'), $uploads);
+            $parts = [$text, ...array_map(static fn (object $f): string => $f->raw, $files)];
+            $batch = $skipAnonymization
+                ? $this->maskSecrets($user, $ip, $parts)
+                : $this->anonymizeParts($user, $ip, $parts, $files === [] ? 'message' : 'message_files');
+            $textContent = $batch[0];
+            foreach ($files as $i => $file) {
+                $file->content = $batch[$i + 1];
+                unset($file->raw);
+            }
+            unset($parts, $batch);
+        } else {
+            $files = [];
+            foreach ($uploads as $upload) {
+                $files[] = $this->handleUpload($user, $ip, $upload);
+            }
+            $textContent = $this->anonymize($user, $ip, $text, 'message');
         }
-        $textContent = $skipAnonymization ? AnonymizedText::fromStorage($text) : $this->anonymize($user, $ip, $text, 'message');
         $text = '';
         $fileContents = array_map(
             static fn (object $file): AnonymizedText => $file->content->withLabel('[Вложение: ' . strtoupper($file->extension) . ']'),
@@ -155,9 +183,10 @@ final class ChatService
             ]);
         }
 
-        // 4. История — только обезличенные сохранённые реплики, в пределах лимита.
-        $history = $conversation !== null ? $this->historyFor((int) $conversation['id'], $user) : [];
-        $history[] = ['role' => 'user', 'content' => $userContent];
+        // 4. Контекст по окну выбранной модели: иерархия инструкций, сводка, состояние проекта,
+        // источники (целиком или релевантные фрагменты), свежая история. Только обезличенные данные.
+        $plan = $this->buildContext($user, $conversation, $projectId, $allowedModels[$modelId], $userContent->value);
+        $history = array_map(static fn (array $m): array => ['role' => $m['role'], 'content' => AnonymizedText::fromStorage($m['content'])], $plan['messages']);
 
         if ($conversation === null || (int) $conversation['provider_id'] !== $providerId) {
             $this->events->user($ip, $log, LlmEventLog::OP_CHAT, 'LLM_PROVIDER_SELECT_SUCCESS', [
@@ -167,12 +196,12 @@ final class ChatService
 
         // 5. LLM Gateway (повторно проверяет права).
         try {
-            $systemPrompt = trim($this->settings->get('system_prompt'));
-            $context = $projectId !== null ? $this->projects->contextFor($projectId, $user->ownerKey()) : null;
-            $result = $this->llmGateway->complete($user, $providerId, $history, $systemPrompt !== '' ? $systemPrompt : null, $context);
+            $result = $this->llmGateway->completeWithFailover($user, $modelId, $history, $plan['system'], null, $allowedModels,
+                $this->settings->get('fallback_auto') === '1', 540, $plan['report']['total']);
         } catch (LlmException $e) {
             $this->events->user($ip, $log, LlmEventLog::OP_CHAT, 'LLM_REQUEST_FAILED', [
-                'provider' => $providerName, 'provider_id' => $providerId, 'reason' => $e->errorCode, 'http_status' => $e->httpStatus,
+                'provider' => $providerName, 'provider_id' => $providerId, 'model_id' => $modelId, 'reason' => $e->errorCode, 'http_status' => $e->httpStatus,
+                'last_reason' => $e->providerErrorType,
             ]);
             throw new ChatException('llm_' . $e->errorCode, $e->userMessage(), $e->errorCode === 'access_denied' ? 403 : 502);
         }
@@ -180,11 +209,16 @@ final class ChatService
         // Расход: данные провайдера (вся история + контекст проекта), иначе оценка.
         $charged = ($result->inputTokens !== null || $result->outputTokens !== null)
             ? (int) $result->inputTokens + (int) $result->outputTokens
-            : UsageLimiter::estimateTokens(array_sum(array_map(static fn (array $m): int => mb_strlen($m['content']->value), $history)) + mb_strlen($result->text) + ($context !== null ? mb_strlen($context->value) : 0));
+            : $plan['report']['total'] + UsageLimiter::estimateTokens(mb_strlen($result->text));
         $this->usage->record($user->ownerKey(), $charged);
 
+        if ($result->fallbackFrom !== null) {
+            $this->events->user($ip, $log, LlmEventLog::OP_CHAT, 'LLM_FALLBACK_USED', [
+                'requested_model_id' => $modelId, 'answered_model_id' => $result->modelId, 'answered_provider' => $result->providerName, 'attempts' => $result->attempts,
+            ]);
+        }
         $this->events->user($ip, $log, LlmEventLog::OP_CHAT, 'LLM_REQUEST_SUCCESS', [
-            'provider' => $providerName, 'provider_id' => $providerId, 'model' => $result->model,
+            'provider' => $result->providerName ?? $providerName, 'provider_id' => $result->providerId ?? $providerId, 'model' => $result->model,
             'input_tokens' => $result->inputTokens, 'output_tokens' => $result->outputTokens, 'usage_charged' => $charged,
             'project_id' => $projectId, 'duration_ms' => $result->durationMs,
         ]);
@@ -195,7 +229,7 @@ final class ChatService
         // список, отдельная таблица ради счётчика в UI избыточна.
         $attachmentType = $files !== [] ? implode(', ', array_map(static fn (object $f): string => $f->extension, $files)) : null;
         $attachmentSize = $files !== [] ? array_sum(array_map(static fn (object $f): int => $f->size, $files)) : null;
-        $saved = $this->conversations->transactional(function () use ($conversation, $user, $providerId, $projectId, $userContent, $result, $attachmentType, $attachmentSize, $charged, $skipAnonymization): array {
+        $saved = $this->conversations->transactional(function () use ($conversation, $user, $providerId, $projectId, $userContent, $result, $attachmentType, $attachmentSize, $charged, $skipAnonymization, $modelId, $plan): array {
             if ($conversation === null) {
                 $title = self::titleFrom($userContent->value);
                 $id = $this->conversations->create($user->ownerKey(), $title, $providerId, $projectId);
@@ -205,7 +239,10 @@ final class ChatService
             }
             $id = (int) $conversation['id'];
             $userMessageId = $this->conversations->addMessage($id, 'user', $userContent->value, $providerId, null, $attachmentType, $attachmentSize, null, $skipAnonymization);
-            $assistantMessageId = $this->conversations->addMessage($id, 'assistant', $result->text, $providerId, $result->model, null, null, $charged);
+            $assistantMessageId = $this->conversations->addMessage($id, 'assistant', $result->text, $result->providerId ?? $providerId, $result->model, null, null, $charged);
+            $this->conversations->setContextReport($assistantMessageId, $plan['report'] + ['input_tokens' => (int) $result->inputTokens, 'output_tokens' => (int) $result->outputTokens,
+                'fallback_from' => $result->fallbackFrom, 'truncated' => $result->truncated()]);
+            $this->conversations->setModel($id, $modelId);
             if ($projectId !== null) {
                 $this->projects->touch($projectId);
             }
@@ -235,8 +272,13 @@ final class ChatService
             ],
             'assistant_message' => [
                 'id' => $saved['assistant_message_id'], 'role' => 'assistant', 'content' => $result->text,
-                'model' => $result->model, 'provider' => $providerName,
+                'model' => $result->model, 'provider' => $result->providerName ?? $providerName,
+                // ответила резервная модель — пользователь видит это явно
+                'fallback_from' => $result->fallbackFrom, 'truncated' => $result->truncated(),
+                'context_report' => $plan['report'] + ['input_tokens' => (int) $result->inputTokens, 'output_tokens' => (int) $result->outputTokens],
             ],
+            // Обслуживание контекста после ответа (сводка, состояние проекта) — вызывающий выполняет его, уже отдав ответ.
+            'maintenance' => $plan['needsSummary'] ? ['conversation_id' => $saved['conversation']['id'], 'model_id' => $modelId, 'project_id' => $projectId] : null,
         ];
     }
 
@@ -304,16 +346,14 @@ final class ChatService
     }
 
     /**
-     * Вариант handleUpload() для skipAnonymization=true: файл НИКОГДА не
-     * уходит в сервис обезличивания (даже целиком через api_file) — только
-     * локальное извлечение текста тем же FileProcessor, без последующего
-     * anonymize(). Пользователь явно подтвердил отсутствие конфиденциальных
-     * данных для всего сообщения — распространяется и на вложения к нему.
+     * Локальное извлечение текста вложения (FileProcessor: форматы, OCR) без
+     * обращения к внешним сервисам. Исходный текст живёт только в памяти запроса
+     * и сразу передаётся на обезличивание (или маскирование секретов).
      *
      * @param array{tmp_name:string,name:string,size:int,error:int} $upload
-     * @return object{content:AnonymizedText,extension:string,size:int}
+     * @return object{raw:string,extension:string,size:int}
      */
-    private function handleUploadRaw(ChatUser $user, string $ip, array $upload): object
+    private function extractUpload(ChatUser $user, string $ip, array $upload, string $resultLabel): object
     {
         $extension = strtolower(pathinfo((string) $upload['name'], PATHINFO_EXTENSION));
         $fields = ['type' => $extension !== '' ? $extension : 'unknown', 'size' => (int) $upload['size']];
@@ -328,16 +368,64 @@ final class ChatService
 
             $file = $this->fileProcessor->process((string) $upload['tmp_name'], (string) $upload['name'], (int) $upload['size'], $this->isHttpUpload);
             $this->events->user($ip, $user->logName(), LlmEventLog::OP_FILE, 'FILE_UPLOAD_SUCCESS', $fields + [
-                'result' => 'extracted_unanonymized', 'ocr' => $file->ocrUsed, 'pages' => $file->pages, 'ocr_pages' => $file->ocrPages,
+                'result' => $resultLabel, 'ocr' => $file->ocrUsed, 'pages' => $file->pages, 'ocr_pages' => $file->ocrPages,
                 'text_chars' => mb_strlen($file->text),
             ]);
-            $content = AnonymizedText::fromStorage($file->text);
         } catch (FileProcessingException $e) {
             $this->events->user($ip, $user->logName(), LlmEventLog::OP_FILE, 'FILE_UPLOAD_FAILED', $fields + ['reason' => $e->errorCode]);
             throw new ChatException('file_' . $e->errorCode, $e->userMessage(), 422);
         }
 
-        return (object) ['content' => $content, 'extension' => $extension, 'size' => (int) $upload['size']];
+        return (object) ['raw' => $file->text, 'extension' => $extension, 'size' => (int) $upload['size']];
+    }
+
+    /**
+     * Совместное обезличивание частей одного запроса (сообщение + вложения).
+     *
+     * @param list<string> $parts
+     * @return list<AnonymizedText>
+     */
+    private function anonymizeParts(ChatUser $user, string $ip, array $parts, string $purpose): array
+    {
+        try {
+            $batch = $this->anonymizer->anonymizeMany($parts, $purpose);
+        } catch (AnonymizationException $e) {
+            $this->events->user($ip, $user->logName(), LlmEventLog::OP_ANONYMIZATION, 'ANONYMIZATION_FAILED', [
+                'purpose' => $purpose, 'reason' => $e->errorCode, 'parts' => count($parts),
+            ]);
+            throw new ChatException('anonymization_failed', $e->userMessage(), 503);
+        }
+        $this->events->user($ip, $user->logName(), LlmEventLog::OP_ANONYMIZATION, 'ANONYMIZATION_SUCCESS', [
+            'purpose' => $purpose, 'parts' => count($parts), 'text_chars' => array_sum(array_map('mb_strlen', $parts)),
+            'replaced' => $batch->replaced, 'categories' => self::statsLine($batch->stats), 'duration_ms' => $batch->durationMs,
+        ]);
+
+        return $batch->texts;
+    }
+
+    /**
+     * @param list<string> $parts
+     * @return list<AnonymizedText>
+     */
+    private function maskSecrets(ChatUser $user, string $ip, array $parts): array
+    {
+        try {
+            $batch = $this->anonymizer->maskSecrets($parts, 'unanonymized');
+        } catch (AnonymizationException $e) {
+            $this->events->user($ip, $user->logName(), LlmEventLog::OP_ANONYMIZATION, 'SECRET_MASK_FAILED', ['reason' => $e->errorCode]);
+            throw new ChatException('anonymization_failed', 'Не удалось проверить сообщение на пароли и ключи — запрос не отправлен.', 503);
+        }
+        if ($batch->replaced > 0) {
+            $this->events->user($ip, $user->logName(), LlmEventLog::OP_ANONYMIZATION, 'SECRET_MASKED', ['replaced' => $batch->replaced]);
+        }
+
+        return $batch->texts;
+    }
+
+    /** @param array<string,int> $stats */
+    private static function statsLine(array $stats): string
+    {
+        return implode(',', array_map(static fn (string $k, int $v): string => $k . ':' . $v, array_keys($stats), $stats));
     }
 
     private function anonymize(ChatUser $user, string $ip, string $text, string $purpose): AnonymizedText
@@ -383,6 +471,83 @@ final class ChatService
         ]);
 
         return $anonymized->value;
+    }
+
+    /**
+     * Стиль и личные постоянные инструкции пользователя (слой 6). Инструкции уходят в модель —
+     * обезличиваются и хранятся только в обезличенном виде; пользователь видит итог.
+     *
+     * @return array{style:?string,instructions:string}
+     */
+    public function setUserPreferences(ChatUser $user, string $ip, ?string $style, string $instructions): array
+    {
+        $style = $this->checkStyle($style);
+        $anon = $this->anonymizeInstruction($user, $ip, $instructions, 'user_instructions');
+        $this->usage->touchProfile($user);
+        $this->conversations->setUserPreferences($user->ownerKey(), $style, $anon);
+        $this->events->user($ip, $user->logName(), LlmEventLog::OP_CHAT, 'USER_PREFERENCES_UPDATE', ['style' => $style ?? 'default', 'instructions_chars' => mb_strlen($anon)]);
+
+        return ['style' => $style, 'instructions' => $anon];
+    }
+
+    /** @return array{style:?string,instructions:string} */
+    public function setConversationPreferences(ChatUser $user, string $ip, int $conversationId, ?string $style, string $instructions): array
+    {
+        if ($this->conversations->findOwned($conversationId, $user->ownerKey()) === null) {
+            throw new ChatException('not_found', 'Диалог не найден.', 404);
+        }
+        $style = $this->checkStyle($style);
+        $anon = $this->anonymizeInstruction($user, $ip, $instructions, 'dialog_instructions');
+        $this->conversations->setConversationPreferences($conversationId, $user->ownerKey(), $style, $anon);
+        $this->events->user($ip, $user->logName(), LlmEventLog::OP_CHAT, 'CONVERSATION_PREFERENCES_UPDATE', ['conversation_id' => $conversationId, 'style' => $style ?? 'default', 'instructions_chars' => mb_strlen($anon)]);
+
+        return ['style' => $style, 'instructions' => $anon];
+    }
+
+    public function setProjectDescription(ChatUser $user, string $ip, int $projectId, string $description): string
+    {
+        if ($this->projects->findOwned($projectId, $user->ownerKey()) === null) {
+            throw new ChatException('not_found', 'Проект не найден.', 404);
+        }
+        $anon = $this->anonymizeInstruction($user, $ip, mb_substr($description, 0, 1000), 'project_description');
+        $this->projects->setDescription($projectId, $anon);
+
+        return $anon;
+    }
+
+    /** Разрешённые администратором стили: ключ → название. @return array<string,string> */
+    public function allowedStyles(): array
+    {
+        $out = [];
+        foreach (array_filter(explode(',', $this->settings->get('styles_allowed'))) as $key) {
+            if (isset(\App\Llm\Prompt\PromptAssembler::STYLES[$key])) {
+                $out[$key] = \App\Llm\Prompt\PromptAssembler::STYLES[$key][0];
+            }
+        }
+
+        return $out;
+    }
+
+    private function checkStyle(?string $style): ?string
+    {
+        if ($style === null || $style === '') {
+            return null;
+        }
+        if (!array_key_exists($style, $this->allowedStyles())) {
+            throw new ChatException('style_denied', 'Этот стиль ответа недоступен.', 422);
+        }
+
+        return $style;
+    }
+
+    private function anonymizeInstruction(ChatUser $user, string $ip, string $text, string $purpose): string
+    {
+        $text = trim($text);
+        if (mb_strlen($text) > 4000) {
+            throw new ChatException('too_long', 'Инструкция — не длиннее 4000 символов.');
+        }
+
+        return $text === '' ? '' : $this->anonymize($user, $ip, $text, $purpose)->value;
     }
 
     /**
@@ -486,27 +651,63 @@ final class ChatService
         return ['id' => $id, 'title' => $title, 'source_type' => $type, 'file_type' => $fileType, 'chars' => mb_strlen($content->value)];
     }
 
-    /** @return list<array{role:string,content:AnonymizedText}> */
-    private function historyFor(int $conversationId, ChatUser $user): array
+    /**
+     * @param array<string,mixed>|null $conversation
+     * @param array<string,mixed> $model строка llm_models (окно, длина ответа, особенности)
+     * @return array{system:string,messages:list<array{role:string,content:string}>,report:array<string,int>,needsSummary:bool,droppedUncovered:int}
+     * @throws ChatException
+     */
+    private function buildContext(ChatUser $user, ?array $conversation, ?int $projectId, array $model, string $current): array
     {
-        $limit = max(1000, (int) $this->settings->get('history_max_chars'));
-        $messages = $this->conversations->messages($conversationId, $user->ownerKey());
-
-        $selected = [];
-        $total = 0;
-        for ($i = count($messages) - 1; $i >= 0; $i--) {
-            $length = mb_strlen((string) $messages[$i]['content']);
-            if ($total + $length > $limit) {
-                break;
-            }
-            $total += $length;
-            array_unshift($selected, [
-                'role' => (string) $messages[$i]['role'],
-                'content' => AnonymizedText::fromStorage((string) $messages[$i]['content']),
-            ]);
+        $project = $projectId !== null ? $this->projects->contextParts($projectId, $user->ownerKey()) : null;
+        $history = $conversation !== null ? $this->conversations->messages((int) $conversation['id'], $user->ownerKey()) : [];
+        $summary = $conversation !== null && $this->summaries !== null ? $this->summaries->get((int) $conversation['id']) : null;
+        $prefs = $this->conversations->preferences($conversation !== null ? (int) $conversation['id'] : null, $user->ownerKey());
+        $allowedStyles = array_filter(explode(',', $this->settings->get('styles_allowed')));
+        $style = $prefs['style'] ?? $this->settings->get('style_default');
+        $layers = [
+            'admin' => trim($this->settings->get('system_prompt')),
+            'style' => in_array($style, $allowedStyles, true) ? $style : $this->settings->get('style_default'),
+            'model' => trim((string) ($model['system_hint'] ?? '')),
+            'project' => $project !== null ? trim(($project['description'] !== '' ? 'Проект: ' . $project['description'] . "\n" : '') . $project['instructions']) : '',
+            'dialog' => $prefs['dialog'] ?? '',
+            'personal' => $prefs['personal'] ?? '',
+        ];
+        try {
+            return ContextBuilder::build((int) $model['context_window'], (int) $model['max_output_tokens'], $layers, $project['sources'] ?? [],
+                array_map(static fn (array $m): array => ['id' => (int) $m['id'], 'role' => (string) $m['role'], 'content' => (string) $m['content'], 'unanonymized' => !empty($m['unanonymized'])], $history),
+                $current, $summary !== null ? ['text' => SummaryService::PREFIX . "\n\n" . $summary['text'], 'covered_until_id' => $summary['covered_until_id']] : null,
+                $project['state'] ?? null, (int) ceil(max(1000, (int) $this->settings->get('history_max_chars')) / ContextBuilder::CHARS_PER_TOKEN));
+        } catch (ContextOverflowException $e) {
+            throw new ChatException('context_overflow', 'Сообщение вместе с инструкциями не помещается в контекст выбранной модели (нужно ~' . $e->required . ' токенов, доступно ' . $e->budget . '). Сократите сообщение или выберите модель с бо́льшим окном.', 422);
         }
+    }
 
-        return $selected;
+    /**
+     * Обслуживание контекста после ответа (вызывается, когда ответ пользователю уже отдан): обновить сводку
+     * ранней части диалога и состояние проекта. Сбой не влияет на пользователя.
+     *
+     * @param array{conversation_id:int,model_id:int,project_id:?int} $task
+     */
+    public function maintainContext(ChatUser $user, array $task): void
+    {
+        if ($this->summaries === null) {
+            return;
+        }
+        $allowedModels = $this->models->allowedFor($this->accessPolicy->allowedProviders($user->groupIds, $user->domainId, $user->ownerKey()));
+        $summaryModel = (int) $this->settings->get('summary_model_id');
+        $modelId = isset($allowedModels[$summaryModel]) ? $summaryModel : $task['model_id'];
+        if (!isset($allowedModels[$modelId])) {
+            return;
+        }
+        $history = array_map(static fn (array $m): array => ['id' => (int) $m['id'], 'role' => (string) $m['role'], 'content' => (string) $m['content'], 'unanonymized' => !empty($m['unanonymized'])],
+            $this->conversations->messages($task['conversation_id'], $user->ownerKey()));
+        if ($this->summaries->update($user, $task['conversation_id'], $history, $modelId, $allowedModels) && $task['project_id'] !== null) {
+            $summary = $this->summaries->get($task['conversation_id']);
+            if ($summary !== null) {
+                $this->summaries->updateProjectState($user, $task['project_id'], $summary['text'], $modelId, $allowedModels);
+            }
+        }
     }
 
     private static function titleFrom(string $anonymizedText): string

@@ -44,6 +44,9 @@ final class AnonymizationGateway
      */
     public function anonymize(string $text, string $purpose): AnonymizedText
     {
+        if ($this->settings->isInternal()) {
+            return $this->anonymizeMany([$text], $purpose)->texts[0];
+        }
         if (!$this->settings->isConfigured()) {
             throw new AnonymizationException('not_configured', 'Сервис обезличивания не настроен.');
         }
@@ -92,6 +95,138 @@ final class AnonymizationGateway
         );
 
         return AnonymizedText::fromGateway($result, $this);
+    }
+
+    /**
+     * Совместное обезличивание нескольких текстов одной сессией замен.
+     * Встроенный сервис обрабатывает их одним запросом (согласованные обозначения,
+     * исправление 0.56.1 «Переговорки»); внешние профили — по одному (совместимость).
+     *
+     * @param list<string> $texts
+     * @param array<string,string> $draft черновик настроек (только лаборатория)
+     * @throws AnonymizationException
+     */
+    public function anonymizeMany(array $texts, string $purpose, bool $detail = false, ?string $profile = null, array $draft = []): AnonymizationBatch
+    {
+        if (!$this->settings->isInternal()) {
+            return new AnonymizationBatch(array_map(fn (string $t): AnonymizedText => $this->anonymize($t, $purpose), array_values($texts)));
+        }
+
+        return $this->callInternal(array_values($texts), $purpose, $detail, $profile ?? $this->settings->get('internal_profile'), $this->settings->internalEngineSettings($draft));
+    }
+
+    /**
+     * Только секреты (пароли, токены, ключи) — для сообщений, которые пользователь с правом
+     * allow_unanonymized отправляет без обезличивания: секреты скрываются при любых настройках
+     * доступа (как guard.mask_secrets «Переговорки» на каждом обращении к модели). Остальные
+     * категории остаются как есть. Без встроенного сервиса (установка без контейнеров) — текст
+     * не меняется, как раньше.
+     *
+     * @param list<string> $texts
+     * @throws AnonymizationException
+     */
+    public function maskSecrets(array $texts, string $purpose): AnonymizationBatch
+    {
+        $texts = array_values($texts);
+        if (AnonymizationSettings::internalUrl() === '' || AnonymizationSettings::internalToken() === '') {
+            return new AnonymizationBatch(array_map(fn (string $t): AnonymizedText => AnonymizedText::fromGateway($t, $this), $texts));
+        }
+        $keepAll = array_fill_keys(array_keys(AnonymizationSettings::INTERNAL_CATEGORIES), 'keep');
+
+        return $this->callInternal($texts, $purpose . '_secrets', false, 'custom', ['custom_actions' => $keepAll]);
+    }
+
+    /**
+     * @param list<string> $texts
+     * @param array<string,mixed> $engineSettings
+     */
+    private function callInternal(array $texts, string $purpose, bool $detail, string $profile, array $engineSettings): AnonymizationBatch
+    {
+        if (AnonymizationSettings::internalUrl() === '' || AnonymizationSettings::internalToken() === '') {
+            throw new AnonymizationException('not_configured', 'Встроенный сервис обезличивания не настроен (ANONYMIZER_URL/INTERNAL_API_TOKEN).');
+        }
+        if (array_filter($texts, static fn (string $t): bool => trim($t) !== '') === []) {
+            return new AnonymizationBatch(array_map(fn (string $t): AnonymizedText => AnonymizedText::fromGateway($t, $this), $texts));
+        }
+        $started = microtime(true);
+        $chars = array_sum(array_map('mb_strlen', $texts));
+        $context = ['purpose' => $purpose, 'texts' => count($texts), 'input_chars' => $chars];
+        try {
+            $timeout = max(5, (int) $this->settings->get('internal_timeout'));
+            $response = $this->send(HttpRequest::json(
+                AnonymizationSettings::internalUrl() . '/v1/anonymize',
+                [
+                    'texts' => $texts,
+                    'profile' => $profile,
+                    'settings' => $engineSettings,
+                    'detail' => $detail,
+                ],
+                ['X-Internal-Token' => AnonymizationSettings::internalToken()],
+                5,
+                $timeout + 10,
+                null,
+                true,
+            ));
+            $json = $response->json();
+            if (!$response->isSuccess()) {
+                $code = is_array($json) && is_array($json['detail'] ?? null) && is_string($json['detail']['code'] ?? null) ? $json['detail']['code']
+                    : (is_array($json) && is_string($json['detail'] ?? null) && preg_match('/\A[a-z_]{2,40}\z/', $json['detail']) === 1 ? $json['detail'] : 'http_' . $response->status);
+                $message = is_array($json) && is_array($json['detail'] ?? null) && is_string($json['detail']['message'] ?? null) ? $json['detail']['message'] : 'HTTP ' . $response->status;
+                throw new AnonymizationException(match ($code) {
+                    'verification_failed' => 'not_clean',
+                    'nlp_unavailable' => 'nlp_unavailable',
+                    'timeout' => 'timeout',
+                    default => $code,
+                }, $message);
+            }
+            if (!is_array($json) || !is_array($json['texts'] ?? null) || count($json['texts']) !== count($texts) || ($json['verified'] ?? null) !== true) {
+                throw new AnonymizationException('invalid_json', 'Ответ сервиса обезличивания не соответствует контракту.');
+            }
+            $out = [];
+            foreach ($texts as $i => $source) {
+                $value = $json['texts'][$i] ?? null;
+                if (!is_string($value)) {
+                    throw new AnonymizationException('missing_field', 'Нет текста №' . $i . ' в ответе.');
+                }
+                if (trim($source) !== '' && trim($value) === '') {
+                    throw new AnonymizationException('empty_result', 'Пустой результат для непустого текста.');
+                }
+                $out[] = AnonymizedText::fromGateway($value, $this);
+            }
+            $stats = [];
+            foreach ((array) ($json['stats'] ?? []) as $category => $count) {
+                if (is_string($category) && preg_match('/\A[a-z_]{2,20}\z/', $category) === 1 && is_int($count)) {
+                    $stats[$category] = $count;
+                }
+            }
+            $batch = new AnonymizationBatch(
+                $out,
+                (int) ($json['replaced'] ?? array_sum($stats)),
+                $stats,
+                array_values(array_filter((array) ($json['warnings'] ?? []), 'is_string')),
+                (int) round((microtime(true) - $started) * 1000),
+                $detail && is_array($json['replacements'] ?? null) ? $json['replacements'] : [],
+                $detail && is_array($json['candidates'] ?? null) ? $json['candidates'] : [],
+            );
+        } catch (AnonymizationException $e) {
+            $this->diagnosticLogger?->error(DiagnosticSource::ANONYMIZATION, 'anonymize_failed_' . $e->errorCode, 'Обезличивание не выполнено: ' . $e->errorCode . '.',
+                $context + ['duration_ms' => (int) round((microtime(true) - $started) * 1000)]);
+            throw $e;
+        }
+
+        // Только объёмы и счётчики по категориям — без текста и найденных значений.
+        $this->diagnosticLogger?->info(DiagnosticSource::ANONYMIZATION, 'anonymize_success', 'Текст обезличен встроенным сервисом.', $context + [
+            'replaced' => $batch->replaced, 'categories' => implode(',', array_map(static fn ($k, $v) => $k . ':' . $v, array_keys($batch->stats), $batch->stats)),
+            'duration_ms' => $batch->durationMs,
+        ]);
+
+        return $batch;
+    }
+
+    /** Встроенный сервис: обезличивание всех частей запроса одним вызовом. */
+    public function supportsBatch(): bool
+    {
+        return $this->settings->isInternal();
     }
 
     /** Файлы целиком обрабатываются сервисом (DocClean api_file). */
@@ -239,6 +374,15 @@ final class AnonymizationGateway
     {
         $started = microtime(true);
         try {
+            if ($this->settings->isInternal()) {
+                if (!$this->settings->isConfigured()) {
+                    throw new AnonymizationException('not_configured', 'ANONYMIZER_URL/INTERNAL_API_TOKEN не заданы.');
+                }
+                $ready = $this->send(new HttpRequest('GET', AnonymizationSettings::internalUrl() . '/readyz', [], null, 3, 5, null, true));
+                if ($ready->status !== 200) {
+                    throw new AnonymizationException('nlp_unavailable', 'Сервис запущен, но модели распознавания имён не готовы (HTTP ' . $ready->status . ').');
+                }
+            }
             if ($this->settings->isDocClean()) {
                 // Спецификация открыта без ключа: подтверждает, что по Base URL
                 // отвечает именно DocClean, а не заглушка веб-сервера.
@@ -280,6 +424,8 @@ final class AnonymizationGateway
     {
         return match (true) {
             $e->errorCode === 'not_configured' => 'Сервис обезличивания не настроен.',
+            $e->errorCode === 'nlp_unavailable' => 'Встроенный сервис обезличивания не готов: модели распознавания имён не загружены.',
+            $e->errorCode === 'timeout' => 'Обезличивание не уложилось в отведённое время.',
             $e->errorCode === 'invalid_json' => 'Сервис вернул не JSON.',
             $e->errorCode === 'missing_field' => 'В ответе нет поля с обезличенным текстом (проверьте «Поле ответа»).',
             $e->errorCode === 'status_not_ok' => 'Сервис сообщил о неуспешной обработке.',

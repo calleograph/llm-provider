@@ -39,6 +39,7 @@ final class CurlHttpTransport implements HttpTransport
 
         $buffer = '';
         $tooLarge = false;
+        $responseHeaders = [];
         $limit = $request->maxResponseBytes;
 
         $options = [
@@ -52,6 +53,14 @@ final class CurlHttpTransport implements HttpTransport
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_PROTOCOLS => $request->allowPlainHttp ? (CURLPROTO_HTTPS | CURLPROTO_HTTP) : CURLPROTO_HTTPS,
             CURLOPT_NOSIGNAL => true,
+            CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$responseHeaders): int {
+                $pos = strpos($line, ':');
+                if ($pos !== false && count($responseHeaders) < 100) {
+                    $responseHeaders[strtolower(trim(substr($line, 0, $pos)))] = trim(substr($line, $pos + 1));
+                }
+
+                return strlen($line);
+            },
             CURLOPT_WRITEFUNCTION => static function ($ch, string $chunk) use (&$buffer, &$tooLarge, $limit): int {
                 if (strlen($buffer) + strlen($chunk) > $limit) {
                     $tooLarge = true;
@@ -95,7 +104,7 @@ final class CurlHttpTransport implements HttpTransport
             throw new HttpTransportException(self::classify($errno), sprintf('curl errno=%d: %s', $errno, $error));
         }
 
-        return new HttpResponse($status, $buffer, $durationMs);
+        return new HttpResponse($status, $buffer, $durationMs, $responseHeaders);
     }
 
     private static function classify(int $errno): string
@@ -106,6 +115,8 @@ final class CurlHttpTransport implements HttpTransport
             CURLE_COULDNT_CONNECT => 'connect',
             CURLE_SSL_CONNECT_ERROR, CURLE_PEER_FAILED_VERIFICATION, CURLE_SSL_CACERT_BADFILE => 'tls',
             CURLE_UNSUPPORTED_PROTOCOL => 'scheme',
+            // соединение оборвалось посреди ответа или сервер закрыл его, ничего не прислав
+            CURLE_RECV_ERROR, CURLE_PARTIAL_FILE, CURLE_GOT_NOTHING, CURLE_SEND_ERROR => 'closed',
             default => 'other',
         };
     }

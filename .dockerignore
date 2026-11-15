@@ -1,0 +1,11 @@
+.git
+var
+data
+models
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/.pytest_cache
+.phpunit.result.cache
+services/asr/tests

@@ -7,6 +7,7 @@ namespace App\Llm\Files;
 use App\Config\Paths;
 use App\Llm\Files\Extractor\DocxExtractor;
 use App\Llm\Files\Extractor\ImageOcrExtractor;
+use App\Llm\Files\Extractor\OdtExtractor;
 use App\Llm\Files\Extractor\PdfExtractor;
 use App\Llm\Files\Extractor\PlainTextExtractor;
 use App\Llm\Files\Extractor\XlsxExtractor;
@@ -39,6 +40,7 @@ final class FileProcessor
         $processor = new self($settings, $tmpRoot ?? Paths::llmTmp());
         $processor->register(new PlainTextExtractor());
         $processor->register(new DocxExtractor($ocr));
+        $processor->register(new OdtExtractor($ocr));
         $processor->register(new XlsxExtractor());
         $processor->register(new PdfExtractor($settings, $ocr));
         $processor->register(new ImageOcrExtractor($ocr));

@@ -49,6 +49,9 @@ final class AnthropicAdapter implements LlmAdapter
         if ($systemPrompt !== null && trim($systemPrompt) !== '') {
             $payload['system'] = $systemPrompt;
         }
+        if ($provider->temperature !== null) {
+            $payload['temperature'] = min(1.0, $provider->temperature);
+        }
 
         $auth = ['anthropic-version' => $provider->apiVersion ?? self::DEFAULT_VERSION];
         if ($provider->apiKey !== '') {
@@ -69,7 +72,7 @@ final class AnthropicAdapter implements LlmAdapter
     {
         $json = $response->json();
         if (!$response->isSuccess()) {
-            throw LlmException::fromHttpStatus($response->status, $json, mb_substr($response->body, 0, 300));
+            throw LlmException::fromHttpStatus($response->status, $json, mb_substr($response->body, 0, 300), $response->retryAfter());
         }
         if ($json === null || !isset($json['content']) || !is_array($json['content'])) {
             throw new LlmException('invalid_response', 'Ответ не содержит массива content.');

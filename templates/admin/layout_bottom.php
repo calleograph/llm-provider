@@ -1,5 +1,5 @@
   </main>
 </div>
-<script src="../assets/js/app.js"></script>
+<script src="<?php echo \App\Http\View::asset('../assets/js/app.js'); ?>"></script>
 </body>
 </html>

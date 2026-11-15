@@ -56,7 +56,7 @@ final class SessionManagerTest extends TestCase
     {
         $sessionsPath = Paths::sessions();
 
-        $this->assertStringContainsString('var', $sessionsPath);
+        $this->assertStringStartsWith(Paths::var() . '/', $sessionsPath);
         $this->assertStringNotContainsString(sys_get_temp_dir(), $sessionsPath);
     }
 

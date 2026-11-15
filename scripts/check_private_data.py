@@ -33,7 +33,7 @@ DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:%s))
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})")
 IPV4 = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?![\d.])")
 # имена файлов/кода, похожие на домен (app.state, config.ru-…): отсеиваются по расширению первого/последнего компонента
-CODE_LIKE = re.compile(r"^(?:ws|self|this|app|window|document|os|sys|req|res|settings|config|cfg|state|ctx|request|response|result|data|obj|item|row)\.", re.I)
+CODE_LIKE = re.compile(r"^(?:ws|self|this|app|main|window|document|os|sys|req|res|settings|config|cfg|state|ctx|request|response|result|data|obj|item|row)\.", re.I)
 
 
 def load_allow() -> tuple[list[str], list[re.Pattern[str]]]:

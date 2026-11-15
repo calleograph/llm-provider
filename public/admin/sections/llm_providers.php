@@ -159,7 +159,13 @@ if ($method === 'POST' && in_array($action, $providerActions, true)) {
                     'system_prompt' => trim(str_replace("\r\n", "\n", (string) ($_POST['system_prompt'] ?? ''))),
                     'history_max_chars' => (string) (int) ($_POST['history_max_chars'] ?? 0),
                     'max_message_chars' => (string) (int) ($_POST['max_message_chars'] ?? 0),
+                    'style_default' => array_key_exists((string) ($_POST['style_default'] ?? ''), \App\Llm\Prompt\PromptAssembler::STYLES) ? (string) $_POST['style_default'] : 'balanced',
+                    'styles_allowed' => implode(',', array_intersect(array_keys(\App\Llm\Prompt\PromptAssembler::STYLES), (array) ($_POST['styles_allowed'] ?? []))),
+                    'summary_model_id' => (string) max(0, (int) ($_POST['summary_model_id'] ?? 0)),
                 ];
+                if (!in_array($values['style_default'], explode(',', $values['styles_allowed']), true)) {
+                    $values['styles_allowed'] = trim($values['styles_allowed'] . ',' . $values['style_default'], ',');
+                }
                 $settingsErrors = ChatSettings::validate($values);
                 if ($settingsErrors !== []) {
                     $flashError = 'Общие параметры не сохранены: ' . implode(' ', $settingsErrors);
@@ -402,11 +408,41 @@ ob_start();
     <div class="field">
       <label class="field-label" for="system_prompt">Системная инструкция для всех нейросетей (не содержит пользовательских данных)<?php echo View::settingCode('CHAT_SYSTEM_PROMPT'); ?></label>
       <textarea class="text-input" id="system_prompt" name="system_prompt" rows="3" maxlength="8000"><?php echo View::e($chatSettings->get('system_prompt')); ?></textarea>
+      <p class="muted llm-note">Слой 3 из 6: базовые правила, правила достоверности и безопасности встроены и важнее; инструкции модели, проекта и диалога идут после.</p>
     </div>
   </div>
   <div class="form-row">
     <div class="field">
-      <label class="field-label" for="history_max_chars">Лимит истории, передаваемой в модель (символов)<?php echo View::settingCode('CHAT_HISTORY_MAX_CHARS'); ?></label>
+      <label class="field-label" for="style_default">Стиль ответа по умолчанию</label>
+      <select class="text-input" id="style_default" name="style_default">
+<?php foreach (\App\Llm\Prompt\PromptAssembler::STYLES as $key => [$label]): ?>
+        <option value="<?php echo $key; ?>" <?php echo $chatSettings->get('style_default') === $key ? 'selected' : ''; ?>><?php echo View::e($label); ?></option>
+<?php endforeach; ?>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="summary_model_id">Модель для сводок длинных диалогов</label>
+      <select class="text-input" id="summary_model_id" name="summary_model_id">
+        <option value="0">та же, что отвечает</option>
+<?php foreach ($llmModule->models()->all() as $m): ?>
+        <option value="<?php echo (int) $m['id']; ?>" <?php echo (int) $chatSettings->get('summary_model_id') === (int) $m['id'] ? 'selected' : ''; ?>><?php echo View::e($m['display_name'] . ' · ' . $m['provider_name']); ?></option>
+<?php endforeach; ?>
+      </select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <span class="field-label">Стили, доступные сотрудникам</span>
+      <div class="llm-check-list">
+<?php $allowedStyles = explode(',', $chatSettings->get('styles_allowed')); foreach (\App\Llm\Prompt\PromptAssembler::STYLES as $key => [$label]): ?>
+        <label class="llm-inline-check"><input type="checkbox" name="styles_allowed[]" value="<?php echo $key; ?>" <?php echo in_array($key, $allowedStyles, true) ? 'checked' : ''; ?>> <?php echo View::e($label); ?></label>
+<?php endforeach; ?>
+      </div>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="history_max_chars">Потолок истории в контексте (символов) — дополнительно к окну модели<?php echo View::settingCode('CHAT_HISTORY_MAX_CHARS'); ?></label>
       <input class="text-input" type="number" id="history_max_chars" name="history_max_chars" value="<?php echo View::e($chatSettings->get('history_max_chars')); ?>">
     </div>
     <div class="field">

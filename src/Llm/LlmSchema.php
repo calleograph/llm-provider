@@ -267,6 +267,97 @@ final class LlmSchema
 
         self::seedDefaultLimitCategory($pdo);
 
+        // Модели внутри провайдера (схема по образцу Hermes: provider → models → fallback_providers).
+        // Провайдер — подключение (endpoint, тип API, ключ, заголовки, таймауты, маршрутизация Polza);
+        // модель — то, что выбирает пользователь: идентификатор у провайдера, окно контекста, длина ответа,
+        // температура, приоритет, цепочка резервных моделей. Доступ к модели = доступ к её провайдеру.
+        $pdo->exec(<<<SQL
+            CREATE TABLE IF NOT EXISTS llm_models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id INTEGER NOT NULL REFERENCES llm_providers(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                context_window INTEGER NOT NULL DEFAULT 32000,
+                max_output_tokens INTEGER NOT NULL DEFAULT 2048,
+                temperature REAL,
+                supports_streaming INTEGER NOT NULL DEFAULT 1,
+                supports_json INTEGER NOT NULL DEFAULT 0,
+                priority INTEGER NOT NULL DEFAULT 100,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                fallback_ids TEXT NOT NULL DEFAULT '[]',
+                price_in_per_mtoken REAL,
+                price_out_per_mtoken REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(provider_id, model)
+            )
+        SQL);
+        // Состояние модели между запросами: счётчики, последняя ошибка, пауза после сбоев (fallback_cooldown Hermes).
+        $pdo->exec(<<<SQL
+            CREATE TABLE IF NOT EXISTS llm_model_health (
+                model_id INTEGER PRIMARY KEY REFERENCES llm_models(id) ON DELETE CASCADE,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
+                empty_count INTEGER NOT NULL DEFAULT 0,
+                fallback_count INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                total_ms INTEGER NOT NULL DEFAULT 0,
+                last_ms INTEGER,
+                tokens_in INTEGER NOT NULL DEFAULT 0,
+                tokens_out INTEGER NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0,
+                last_success_at TEXT,
+                last_error_at TEXT,
+                last_error_code TEXT,
+                last_error_message TEXT,
+                cooldown_until INTEGER NOT NULL DEFAULT 0
+            )
+        SQL);
+        // Журнал проблемных моделей: код, HTTP-статус, техническая причина (без текста запросов и ответов), куда переключились.
+        $pdo->exec(<<<SQL
+            CREATE TABLE IF NOT EXISTS llm_model_incidents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                model_id INTEGER,
+                provider_id INTEGER,
+                code TEXT NOT NULL,
+                http_status INTEGER,
+                message TEXT,
+                action TEXT NOT NULL,
+                fallback_model_id INTEGER
+            )
+        SQL);
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_llm_model_incidents_at ON llm_model_incidents(created_at)');
+        self::addColumn($pdo, 'llm_conversations', 'model_id INTEGER');
+        self::seedDefaultModels($pdo);
+
+        // ---- Контекст и экономия токенов (этап 5) ----
+        // Сводка ранней части диалога для модели (полная история остаётся пользователю): итеративно обновляется,
+        // кэшируется до следующего роста истории. Только обезличенный текст — как и вся история.
+        $pdo->exec(<<<SQL
+            CREATE TABLE IF NOT EXISTS llm_conversation_summaries (
+                conversation_id INTEGER PRIMARY KEY REFERENCES llm_conversations(id) ON DELETE CASCADE,
+                covered_until_id INTEGER NOT NULL,
+                summary_z BLOB NOT NULL,
+                chars INTEGER NOT NULL,
+                model_id INTEGER,
+                updated_at TEXT NOT NULL
+            )
+        SQL);
+        // Состояние проекта: краткое резюме работы, факты и решения, незавершённые задачи (обновляется из сводок диалогов проекта).
+        self::addColumn($pdo, 'llm_projects', 'description TEXT');
+        self::addColumn($pdo, 'llm_projects', 'state_z BLOB');
+        self::addColumn($pdo, 'llm_projects', 'state_updated_at TEXT');
+        // Иерархия инструкций (этап 6): модель → проект → диалог; стиль общения пользователя и диалога.
+        self::addColumn($pdo, 'llm_models', 'system_hint TEXT');
+        self::addColumn($pdo, 'llm_conversations', 'instructions_z BLOB');
+        self::addColumn($pdo, 'llm_conversations', 'style TEXT');
+        self::addColumn($pdo, 'llm_users', 'style TEXT');
+        self::addColumn($pdo, 'llm_users', 'instructions_z BLOB');
+        // Сколько токенов контекста ушло с запросом и из чего он состоял (показывается под ответом).
+        self::addColumn($pdo, 'llm_messages', 'context_report TEXT');
+
         // Индивидуальный доступ к нейросети конкретному пользователю чата, в
         // дополнение к правам его групп (llm_group_providers). Не заменяет
         // требование входа: пользователь всё равно обязан состоять хотя бы в
@@ -318,5 +409,19 @@ final class LlmSchema
              VALUES (:name, :period, :tokens, 50, 1, :now, :now)'
         );
         $stmt->execute(['name' => 'Базовый', 'period' => $period, 'tokens' => $tokens, 'now' => $now]);
+    }
+
+    /**
+     * Каждому провайдеру без моделей — модель по умолчанию из его прежних полей (model, max_tokens):
+     * обновление со схемы «один провайдер = одна модель» не меняет поведение и права.
+     */
+    public static function seedDefaultModels(PDO $pdo): void
+    {
+        $now = gmdate('c');
+        $pdo->exec(
+            "INSERT INTO llm_models (provider_id, model, display_name, max_output_tokens, is_default, created_at, updated_at)
+             SELECT p.id, p.model, p.model, p.max_tokens, 1, '{$now}', '{$now}' FROM llm_providers p
+             WHERE NOT EXISTS (SELECT 1 FROM llm_models m WHERE m.provider_id = p.id)"
+        );
     }
 }

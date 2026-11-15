@@ -175,7 +175,36 @@ try {
                 'usage' => $llm->usage()->status($owner, $user->groupIds),
                 'storage' => $llm->storageQuota()->status($owner, $user->groupIds),
                 'can_skip_anonymization' => $llm->access()->canSkipAnonymization($user->groupIds, $user->ownerKey()),
+                'dictation' => ['enabled' => $llm->dictation()->enabled(), 'max_seconds' => $llm->dictation()->maxSeconds()],
+                'styles' => $llm->chatService()->allowedStyles(),
+                'style_default' => $llm->chatSettings()->get('style_default'),
+                'prefs' => (static function () use ($conversations, $owner): array {
+                    $p = $conversations->preferences(null, $owner);
+
+                    return ['style' => $p['style'], 'instructions' => $p['personal']];
+                })(),
             ]);
+
+            // no break
+        case 'POST user_prefs':
+            chatJson(200, $llm->chatService()->setUserPreferences($user, $clientIp, (string) ($_POST['style'] ?? '') ?: null, (string) ($_POST['instructions'] ?? '')));
+
+            // no break
+        case 'POST conversation_prefs':
+            chatJson(200, $llm->chatService()->setConversationPreferences($user, $clientIp, $postId, (string) ($_POST['style'] ?? '') ?: null, (string) ($_POST['instructions'] ?? '')));
+
+            // no break
+        case 'POST dictation_ticket':
+            // Голосовой ввод: одноразовый билет на 60 с для WebSocket-шлюза ASR (вход по сессии и CSRF — здесь).
+            $dictation = $llm->dictation();
+            if (!$dictation->enabled()) {
+                chatJson(403, ['error' => 'Голосовой ввод отключён администратором.', 'code' => 'dictation_disabled']);
+            }
+            if (!$dictation->asrReady()) {
+                chatJson(503, ['error' => 'Распознавание речи сейчас недоступно. Введите текст вручную.', 'code' => 'asr_unavailable']);
+            }
+            $events->user($clientIp, $log, LlmEventLog::OP_CHAT, 'DICTATION_START');
+            chatJson(200, ['ticket' => $dictation->issue($owner), 'path' => 'ws/dictation', 'max_seconds' => $dictation->maxSeconds()]);
 
             // no break
         case 'GET storage':
@@ -223,7 +252,10 @@ try {
                     'id' => (int) $conversation['id'], 'title' => $conversation['title'],
                     'provider_id' => $conversation['provider_id'] !== null ? (int) $conversation['provider_id'] : null,
                     'project_id' => $conversation['project_id'] !== null ? (int) $conversation['project_id'] : null,
+                    'model_id' => isset($conversation['model_id']) ? (int) $conversation['model_id'] : null,
                     'pinned' => (bool) $conversation['pinned'],
+                    'style' => $conversation['style'] ?? null,
+                    'instructions' => \App\Llm\Storage\CompactText::unpack(is_string($conversation['instructions_z'] ?? null) ? $conversation['instructions_z'] : null),
                 ],
                 'messages' => $conversations->messages($id, $owner),
             ]);
@@ -248,8 +280,25 @@ try {
                 chatUploads('files'),
                 $projectId > 0 ? $projectId : null,
                 !empty($_POST['skip_anonymization']),
+                (int) ($_POST['model_id'] ?? 0) > 0 ? (int) $_POST['model_id'] : null,
             );
-            chatJson(200, $result);
+            $maintenance = $result['maintenance'] ?? null;
+            unset($result['maintenance']);
+            if ($maintenance === null) {
+                chatJson(200, $result);
+            }
+            // Ответ уходит пользователю сразу; сводка диалога и состояние проекта обновляются после — не задерживая его.
+            http_response_code(200);
+            echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            }
+            try {
+                $llm->chatService()->maintainContext($user, $maintenance);
+            } catch (\Throwable $e) {
+                error_log('context maintenance: ' . get_class($e));
+            }
+            exit;
 
             // no break
         case 'POST conversation_update':
@@ -289,8 +338,9 @@ try {
             // Разовый перенос устаревшего единого поля инструкций в первый
             // именованный блок — не задевает проекты, где нечего переносить.
             $projects->migrateLegacyInstructions($id, $owner);
+            $parts = $projects->contextParts($id, $owner);
             chatJson(200, [
-                'project' => $project,
+                'project' => $project + ['description' => $parts['description'] ?? '', 'state' => $parts['state'] ?? ''],
                 'instructions' => $projects->instructions($id, $owner),
                 'instructions_limit' => (int) $llm->chatSettings()->get('project_instruction_max_chars'),
                 'instructions_max_blocks' => (int) $llm->chatSettings()->get('project_instructions_max_blocks'),
@@ -328,6 +378,10 @@ try {
             }
             if (isset($_POST['pinned'])) {
                 $projects->setPinned($postId, $owner, $_POST['pinned'] === '1');
+            }
+            if (isset($_POST['description'])) {
+                // Описание уходит в модель (слой проекта) — обезличивается.
+                $response['description'] = $llm->chatService()->setProjectDescription($user, $clientIp, $postId, (string) $_POST['description']);
             }
             if (isset($_POST['instructions'])) {
                 // Инструкции пойдут в модель — обезличиваются; пользователь видит итог.

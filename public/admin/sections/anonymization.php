@@ -24,15 +24,80 @@ $formValues = null;
 $fileErrors = [];
 $fileFormValues = null;
 $checkResult = null;
+$labResult = null;
+$labError = null;
+$labInput = ['text' => '', 'profile' => ''];
 
 $settings = $llmModule->anonymizationSettings();
 $fileSettings = $llmModule->fileSettings();
 $events = $llmModule->events();
 $admin = (string) AdminSession::username();
 
-if ($method === 'POST' && in_array($action, ['save_anonymization', 'check_anonymization', 'save_file_processing'], true)) {
+if ($method === 'POST' && in_array($action, ['save_anonymization', 'check_anonymization', 'save_file_processing', 'lab_anonymization'], true)) {
     if (!Csrf::verify($_POST['csrf'] ?? null)) {
         $flashError = 'Форма устарела, обновите страницу и попробуйте снова.';
+    } elseif ($action === 'save_anonymization' && ($_POST['profile'] ?? '') === AnonymizationSettings::PROFILE_INTERNAL) {
+        // Встроенный сервис: сохраняются только его поля — настройки внешнего API остаются (можно вернуться к ним).
+        $values = ['profile' => AnonymizationSettings::PROFILE_INTERNAL];
+        foreach (['internal_profile', 'internal_person_format', 'internal_org_scope', 'internal_timeout', 'internal_terms', 'internal_exceptions', 'internal_domains'] as $f) {
+            $values[$f] = trim(str_replace("\r\n", "\n", (string) ($_POST[$f] ?? '')));
+        }
+        $actions = [];
+        foreach ((array) ($_POST['internal_action'] ?? []) as $category => $act) {
+            if (array_key_exists((string) $category, AnonymizationSettings::INTERNAL_CATEGORIES) && array_key_exists((string) $act, AnonymizationSettings::INTERNAL_ACTIONS)) {
+                $actions[(string) $category] = (string) $act;
+            }
+        }
+        $values['internal_custom_actions'] = $actions !== [] ? (string) json_encode($actions) : '';
+        $fieldErrors = AnonymizationSettings::validate($values);
+        if ($fieldErrors !== []) {
+            $flashError = 'Проверьте выделенные поля формы.';
+            $formValues = $values + $settings->all();
+        } else {
+            $settings->save($values);
+            // В журнал — только какие параметры менялись и объёмы словарей, без самих терминов.
+            $events->admin($admin, $clientIp, 'anonymization_settings_update', true, [
+                'profile' => 'internal', 'engine_profile' => $values['internal_profile'],
+                'terms' => count(array_filter(explode("\n", $values['internal_terms']))), 'exceptions' => count(array_filter(explode("\n", $values['internal_exceptions']))),
+                'domains' => count(array_filter(explode("\n", $values['internal_domains']))),
+            ]);
+            $flashSuccess = 'Настройки встроенного обезличивания сохранены.';
+        }
+    } elseif ($action === 'lab_anonymization') {
+        // Лаборатория: тот же путь, что у сообщения в чате (извлечение файла → обезличивание → проверка).
+        // Исходные значения показываются только администратору на экране; в журнал — объём и число замен.
+        $labInput['text'] = (string) ($_POST['lab_text'] ?? '');
+        $labInput['profile'] = array_key_exists((string) ($_POST['lab_profile'] ?? ''), AnonymizationSettings::INTERNAL_PROFILES) ? (string) $_POST['lab_profile'] : '';
+        $upload = $_FILES['lab_file'] ?? null;
+        $source = $labInput['text'];
+        $format = 'текст';
+        try {
+            if (is_array($upload) && (int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                if ((int) $upload['error'] !== UPLOAD_ERR_OK) {
+                    throw new \App\Llm\Files\FileProcessingException('upload_error', 'Код ошибки загрузки ' . (int) $upload['error']);
+                }
+                $extracted = $llmModule->fileProcessor()->process((string) $upload['tmp_name'], (string) $upload['name'], (int) $upload['size']);
+                $source = $extracted->text;
+                $format = strtoupper($extracted->extension) . ($extracted->ocrUsed ? ', OCR' : '');
+            }
+            if (trim($source) === '') {
+                throw new \InvalidArgumentException('Вставьте текст или выберите файл.');
+            }
+            if (mb_strlen($source) > 300000) {
+                throw new \InvalidArgumentException('Текст длиннее 300 000 знаков — разбейте его на части.');
+            }
+            $batch = $llmModule->anonymizer()->anonymizeMany([$source], 'admin_lab', true, $labInput['profile'] !== '' ? $labInput['profile'] : null);
+            $labResult = ['source' => $source, 'text' => $batch->texts[0]->value, 'batch' => $batch, 'format' => $format];
+            $events->admin($admin, $clientIp, 'anonymization_lab', true, ['chars' => mb_strlen($source), 'format' => $format, 'replaced' => $batch->replaced]);
+        } catch (\App\Llm\Files\FileProcessingException $e) {
+            $labError = $e->userMessage();
+        } catch (\App\Llm\Anonymization\AnonymizationException $e) {
+            $labError = \App\Llm\Anonymization\AnonymizationGateway::describe($e) . ($e->errorCode === 'not_clean' ? ' ' . $e->getMessage() : '');
+            $events->admin($admin, $clientIp, 'anonymization_lab', false, ['chars' => mb_strlen($source), 'reason' => $e->errorCode]);
+        } catch (\InvalidArgumentException $e) {
+            $labError = $e->getMessage();
+        }
+        unset($source);
     } elseif ($action === 'save_anonymization') {
         $values = [];
         foreach (['base_url', 'endpoint', 'health_endpoint', 'auth_type', 'auth_header_name', 'auth_username', 'connect_timeout', 'timeout',
@@ -164,21 +229,27 @@ ob_start();
 <?php endif; ?>
 
 <?php
-$profile = $current['profile'] ?? AnonymizationSettings::PROFILE_DOCCLEAN;
+$profile = $current['profile'] ?? AnonymizationSettings::PROFILE_INTERNAL;
 $isDocClean = $profile === AnonymizationSettings::PROFILE_DOCCLEAN;
+$isInternal = $profile === AnonymizationSettings::PROFILE_INTERNAL;
+$customActions = json_decode($current['internal_custom_actions'] ?? '', true) ?: [];
+$engineProfiles = ['basic' => ['person' => 'pseudonym', 'organization' => 'pseudonym', 'location' => 'keep'], 'strict' => []];
 $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
 ?>
-<p class="section-title">API обезличивания</p>
+<p class="section-title">Механизм обезличивания</p>
 <form method="post" action="index.php?section=anonymization&action=save_anonymization">
   <input type="hidden" name="csrf" value="<?php echo View::e($csrfToken); ?>">
   <div class="form-row">
     <div class="field">
       <label class="field-label" for="profile">Тип API<?php echo View::settingCode('ANON_PROFILE'); ?></label>
       <select class="text-input" id="profile" name="profile" data-anon-profile>
-        <option value="<?php echo AnonymizationSettings::PROFILE_DOCCLEAN; ?>" <?php echo $isDocClean ? 'selected' : ''; ?>>DocClean — локальный обезличиватель документов</option>
-        <option value="<?php echo AnonymizationSettings::PROFILE_GENERIC; ?>" <?php echo $isDocClean ? '' : 'selected'; ?>>Произвольный JSON API</option>
+        <option value="<?php echo AnonymizationSettings::PROFILE_INTERNAL; ?>" <?php echo $isInternal ? 'selected' : ''; ?>>Встроенный — локальный сервис на этом сервере (рекомендуется)</option>
+        <option value="<?php echo AnonymizationSettings::PROFILE_DOCCLEAN; ?>" <?php echo $isDocClean ? 'selected' : ''; ?>>DocClean — внешний обезличиватель документов</option>
+        <option value="<?php echo AnonymizationSettings::PROFILE_GENERIC; ?>" <?php echo !$isDocClean && !$isInternal ? 'selected' : ''; ?>>Произвольный JSON API</option>
       </select>
     </div>
+  </div>
+  <div class="form-row" data-profile-section="docclean generic"<?php echo $isInternal ? ' hidden' : ''; ?>>
     <div class="field">
       <label class="field-label" for="base_url">URL сервиса<?php echo View::settingCode('ANON_BASE_URL'); ?></label>
       <input class="text-input<?php echo $cls($fieldErrors, 'base_url'); ?>" id="base_url" name="base_url" required value="<?php echo $field('base_url'); ?>" placeholder="https://docclean.corp.local">
@@ -192,6 +263,80 @@ $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
         <button type="button" class="toggle-password" data-target="anon_secret">Показать</button>
       </div>
       <?php echo $err($fieldErrors, 'secret'); ?>
+    </div>
+  </div>
+
+  <div data-profile-section="<?php echo AnonymizationSettings::PROFILE_INTERNAL; ?>"<?php echo $isInternal ? '' : ' hidden'; ?>>
+    <p class="muted llm-note">
+      Обезличивание выполняется на этом сервере (контейнер <code>anonymizer</code>, без выхода в интернет): распознавание имён (slovnet + navec),
+      морфология ФИО (pymorphy3), ИНН/СНИЛС/ОГРН с контрольными суммами, карты, счета, адреса, телефоны, почта, IP, серверы, учётные записи,
+      суммы, номера договоров, словарь организации. Пароли, токены и ключи скрываются <strong>всегда</strong>, при любом профиле и любых правах.
+      После обработки результат проверяется повторно; при утечке или сбое запрос в нейросеть не отправляется.
+    </p>
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label" for="internal_profile">Профиль<?php echo View::settingCode('ANON_INTERNAL_PROFILE'); ?></label>
+        <select class="text-input<?php echo $cls($fieldErrors, 'internal_profile'); ?>" id="internal_profile" name="internal_profile">
+<?php foreach (['basic' => 'Базовый — люди «Иван И.», города остаются, организации с правовой формой', 'strict' => 'Строгий — «Участник N», заменяется всё', 'custom' => 'Настраиваемый — действия по категориям ниже'] as $p => $label): ?>
+          <option value="<?php echo $p; ?>" <?php echo ($current['internal_profile'] ?? 'basic') === $p ? 'selected' : ''; ?>><?php echo View::e($label); ?></option>
+<?php endforeach; ?>
+        </select>
+        <?php echo $err($fieldErrors, 'internal_profile'); ?>
+      </div>
+      <div class="field">
+        <label class="field-label" for="internal_person_format">Имена в настраиваемом профиле</label>
+        <select class="text-input" id="internal_person_format" name="internal_person_format">
+          <option value="short" <?php echo ($current['internal_person_format'] ?? 'short') === 'short' ? 'selected' : ''; ?>>«Иван И.» — читается естественно</option>
+          <option value="role" <?php echo ($current['internal_person_format'] ?? '') === 'role' ? 'selected' : ''; ?>>«Лицо N» — без имён совсем</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="internal_org_scope">Организации в настраиваемом профиле</label>
+        <select class="text-input" id="internal_org_scope" name="internal_org_scope">
+          <option value="legal" <?php echo ($current['internal_org_scope'] ?? 'legal') === 'legal' ? 'selected' : ''; ?>>С правовой формой и из словаря</option>
+          <option value="all" <?php echo ($current['internal_org_scope'] ?? '') === 'all' ? 'selected' : ''; ?>>Все найденные</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="internal_timeout">Таймаут (сек.)</label>
+        <input class="text-input<?php echo $cls($fieldErrors, 'internal_timeout'); ?>" type="number" id="internal_timeout" name="internal_timeout" min="5" max="600" value="<?php echo $field('internal_timeout'); ?>">
+        <?php echo $err($fieldErrors, 'internal_timeout'); ?>
+      </div>
+    </div>
+    <p class="section-title llm-subtitle">Категории (настраиваемый профиль)</p>
+    <div class="anon-categories<?php echo $cls($fieldErrors, 'internal_custom_actions'); ?>">
+<?php foreach (AnonymizationSettings::INTERNAL_CATEGORIES as $cat => $label): ?>
+      <label class="anon-category">
+        <span><?php echo View::e($label); ?></span>
+        <select class="text-input" name="internal_action[<?php echo $cat; ?>]">
+          <option value="">как в базовом</option>
+<?php foreach (AnonymizationSettings::INTERNAL_ACTIONS as $act => $actLabel): ?>
+          <option value="<?php echo $act; ?>" <?php echo ($customActions[$cat] ?? '') === $act ? 'selected' : ''; ?>><?php echo View::e($actLabel); ?></option>
+<?php endforeach; ?>
+        </select>
+      </label>
+<?php endforeach; ?>
+      <label class="anon-category"><span>Пароли, токены, ключи</span><select class="text-input" disabled><option>скрываются всегда</option></select></label>
+    </div>
+    <?php echo $err($fieldErrors, 'internal_custom_actions'); ?>
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label" for="internal_terms">Словарь организации: «термин;категория;замена»<?php echo View::settingCode('ANON_TERMS'); ?></label>
+        <textarea class="text-input mono" id="internal_terms" name="internal_terms" rows="6" placeholder="Альбатрос;project;&#10;Иванов Пётр;person;Руководитель&#10;CRM;project;Система учёта"><?php echo $field('internal_terms'); ?></textarea>
+        <p class="muted llm-note">Категории: project, organization, person, location, host, custom. Слово узнаётся в любой форме. Пустая замена — обозначение категории.</p>
+        <?php echo $err($fieldErrors, 'internal_terms'); ?>
+      </div>
+      <div class="field">
+        <label class="field-label" for="internal_exceptions">Исключения — никогда не заменять</label>
+        <textarea class="text-input" id="internal_exceptions" name="internal_exceptions" rows="6" placeholder="Название своей компании&#10;Общеизвестные названия"><?php echo $field('internal_exceptions'); ?></textarea>
+        <?php echo $err($fieldErrors, 'internal_exceptions'); ?>
+      </div>
+      <div class="field">
+        <label class="field-label" for="internal_domains">Внутренние домены</label>
+        <textarea class="text-input mono" id="internal_domains" name="internal_domains" rows="6" placeholder="corp.example.com"><?php echo $field('internal_domains'); ?></textarea>
+        <p class="muted llm-note">Адреса и имена серверов в этих доменах заменяются; *.local, *.corp, *.lan — всегда.</p>
+        <?php echo $err($fieldErrors, 'internal_domains'); ?>
+      </div>
     </div>
   </div>
 
@@ -233,7 +378,7 @@ $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
     </p>
   </div>
 
-  <div data-profile-section="<?php echo AnonymizationSettings::PROFILE_GENERIC; ?>"<?php echo $isDocClean ? ' hidden' : ''; ?>>
+  <div data-profile-section="<?php echo AnonymizationSettings::PROFILE_GENERIC; ?>"<?php echo $isDocClean || $isInternal ? ' hidden' : ''; ?>>
     <div class="form-row">
       <div class="field">
         <label class="field-label" for="endpoint">Endpoint обезличивания (POST)<?php echo View::settingCode('ANON_ENDPOINT'); ?></label>
@@ -300,6 +445,7 @@ $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
     </p>
   </div>
 
+  <div data-profile-section="docclean generic"<?php echo $isInternal ? ' hidden' : ''; ?>>
   <div class="form-row">
     <div class="field">
       <label class="field-label" for="connect_timeout">Таймаут соединения (сек.)<?php echo View::settingCode('ANON_CONNECT_TIMEOUT'); ?></label>
@@ -321,6 +467,7 @@ $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
     <label class="switch"><input type="checkbox" id="anon_use_corporate_ca" name="use_corporate_ca" value="1" <?php echo ($current['use_corporate_ca'] ?? '1') === '1' ? 'checked' : ''; ?>><span class="track"></span> Проверять TLS по корпоративному CA bundle (раздел «LDAP-подключения»)<?php echo View::settingCode('ANON_CORPORATE_CA'); ?></label>
     <label class="switch"><input type="checkbox" id="allow_http" name="allow_http" value="1" <?php echo ($current['allow_http'] ?? '0') === '1' ? 'checked' : ''; ?>><span class="track"></span> Разрешить http:// (только изолированная сеть — не рекомендуется)<?php echo View::settingCode('ANON_ALLOW_HTTP'); ?></label>
   </div>
+  </div>
   <div class="llm-actions">
     <button class="btn btn-primary" type="submit">Сохранить</button>
     <button class="btn" type="submit" form="checkAnonymization"<?php echo $settings->isConfigured() ? '' : ' disabled'; ?>>Проверить подключение</button>
@@ -329,6 +476,74 @@ $selectedGroups = array_filter(explode(',', $current['docclean_groups'] ?? ''));
 <form id="checkAnonymization" method="post" action="index.php?section=anonymization&action=check_anonymization">
   <input type="hidden" name="csrf" value="<?php echo View::e($csrfToken); ?>">
 </form>
+
+<?php if ($settings->isInternal()): ?>
+<hr class="sep">
+<p class="section-title" id="lab">Проверка: что уйдёт в нейросеть</p>
+<p class="muted llm-note">Тот же путь, что у сообщения в чате: извлечение текста из файла (с OCR) → обезличивание → повторная проверка.
+  Исходные значения показываются только вам на этой странице и в журнал не записываются.</p>
+<form method="post" action="index.php?section=anonymization&action=lab_anonymization#lab" enctype="multipart/form-data" class="anon-lab-form">
+  <input type="hidden" name="csrf" value="<?php echo View::e($csrfToken); ?>">
+  <div class="form-row">
+    <div class="field anon-lab-text">
+      <label class="field-label" for="lab_text">Текст</label>
+      <textarea class="text-input" id="lab_text" name="lab_text" rows="6" placeholder="Вставьте текст с персональными данными для проверки"><?php echo View::e($labInput['text']); ?></textarea>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="lab_file">или документ</label>
+      <input class="text-input" type="file" id="lab_file" name="lab_file" accept="<?php echo View::e(implode(',', array_map(static fn (string $e): string => '.' . $e, $llmModule->fileProcessor()->supportedExtensions()))); ?>">
+    </div>
+    <div class="field">
+      <label class="field-label" for="lab_profile">Профиль для проверки</label>
+      <select class="text-input" id="lab_profile" name="lab_profile">
+        <option value="">текущий (<?php echo View::e(AnonymizationSettings::INTERNAL_PROFILES[$settings->get('internal_profile')] ?? 'Базовый'); ?>)</option>
+<?php foreach (AnonymizationSettings::INTERNAL_PROFILES as $p => $label): ?>
+        <option value="<?php echo $p; ?>" <?php echo $labInput['profile'] === $p ? 'selected' : ''; ?>><?php echo View::e($label); ?></option>
+<?php endforeach; ?>
+      </select>
+    </div>
+  </div>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Проверить</button></div>
+</form>
+<?php if ($labError !== null): ?>
+<div class="alert alert-error"><?php echo View::e($labError); ?></div>
+<?php elseif ($labResult !== null): ?>
+<?php $b = $labResult['batch']; ?>
+<div class="grid grid-3 llm-status-row">
+  <div class="stat-tile"><div class="label">Источник</div><div class="value"><?php echo View::e($labResult['format']); ?>, <?php echo number_format(mb_strlen($labResult['source']), 0, ',', ' '); ?> знаков</div></div>
+  <div class="stat-tile"><div class="label">Замен</div><div class="value"><?php echo (int) $b->replaced; ?></div></div>
+  <div class="stat-tile"><div class="label">Время</div><div class="value"><?php echo (int) $b->durationMs; ?> мс · проверка пройдена</div></div>
+</div>
+<?php if ($b->stats !== []): ?>
+<p class="muted llm-note">По категориям: <?php echo View::e(implode(' · ', array_map(static fn (string $k, int $v): string => (AnonymizationSettings::INTERNAL_CATEGORIES[$k] ?? ($k === 'secret' ? 'Секреты' : $k)) . ' — ' . $v, array_keys($b->stats), $b->stats))); ?></p>
+<?php endif; ?>
+<?php foreach ($b->warnings as $w): ?><div class="alert alert-warn"><?php echo View::e((string) $w); ?></div><?php endforeach; ?>
+<div class="anon-lab-result">
+  <div><p class="field-label">Исходный текст</p><pre class="anon-lab-pre"><?php echo View::e(mb_substr($labResult['source'], 0, 20000)); ?></pre></div>
+  <div><p class="field-label">Уйдёт в нейросеть</p><pre class="anon-lab-pre"><?php echo View::e(mb_substr($labResult['text'], 0, 20000)); ?></pre></div>
+</div>
+<?php if ($b->replacements !== []): ?>
+<div class="llm-table-wrap">
+<table class="data-table">
+  <thead><tr><th>Найдено</th><th>Замена</th><th>Категория</th><th>Правило</th><th>Почему</th></tr></thead>
+  <tbody>
+<?php foreach (array_slice($b->replacements, 0, 300) as $r): ?>
+    <tr><td><?php echo View::e((string) ($r['original'] ?? '')); ?></td><td><?php echo View::e((string) ($r['replacement'] ?? '')); ?></td>
+      <td><?php echo View::e(AnonymizationSettings::INTERNAL_CATEGORIES[(string) ($r['category'] ?? '')] ?? (($r['category'] ?? '') === 'secret' ? 'Пароли, токены, ключи' : (string) ($r['category'] ?? ''))); ?></td>
+      <td class="mono"><?php echo View::e((string) ($r['rule'] ?? '')); ?></td><td><?php echo View::e((string) ($r['evidence'] ?? '')); ?></td></tr>
+<?php endforeach; ?>
+  </tbody>
+</table>
+</div>
+<?php endif; ?>
+<?php if ($b->candidates !== []): ?>
+<p class="muted llm-note">Оставлены как обычная речь: <?php echo View::e(implode(', ', array_map(static fn (array $c): string => (string) ($c['original'] ?? '') . ' (' . (string) ($c['reason'] ?? '') . ')', array_slice($b->candidates, 0, 50)))); ?>.
+  Если это имя — добавьте его в словарь.</p>
+<?php endif; ?>
+<?php endif; ?>
+<?php endif; ?>
 
 <hr class="sep">
 

@@ -14,7 +14,8 @@ final class ChatSettings
     private const PREFIX = 'llm_chat_';
 
     private const DEFAULTS = [
-        'system_prompt' => 'Ты — ассистент сотрудников компании. Персональные и конфиденциальные данные в запросах заменены обезличенными метками — сохраняй эти метки в ответе без изменений.',
+        // Установки администратора — слой 3 иерархии PromptAssembler (базовые правила и правила достоверности встроены в код).
+        'system_prompt' => '',
         'history_max_chars' => '60000',
         'max_message_chars' => '20000',
         // Общий лимит токенов на пользователя; индивидуальный задаётся в «Пользователи чата».
@@ -47,6 +48,18 @@ final class ChatSettings
         // сообщений и источников проектов зачищается (заголовки чатов остаются).
         // 0 — не зачищать никогда.
         'inactivity_content_purge_days' => '90',
+        // Голосовой ввод (локальный ASR GigaAM в контейнере asr): длительность одной диктовки и
+        // сколько диктовок одновременно на сервер. Звук не сохраняется.
+        // Резервирование: после резервных моделей выбранной модели пробовать остальные доступные пользователю по приоритету.
+        'fallback_auto' => '1',
+        // Профили поведения (PromptAssembler::STYLES): по умолчанию и разрешённые пользователю.
+        'style_default' => 'balanced',
+        'styles_allowed' => 'balanced,concise,detailed,technical,business,research,documents,free',
+        // Модель для сводок диалога и состояния проекта (llm_models.id); пусто — та же, что отвечает.
+        'summary_model_id' => '',
+        'dictation_enabled' => '1',
+        'dictation_max_seconds' => '120',
+        'dictation_max_concurrent' => '4',
     ];
 
     public function __construct(private readonly AppSettings $appSettings)

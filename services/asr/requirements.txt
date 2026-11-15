@@ -1,0 +1,15 @@
+# Рантайм-зависимости без torch (torch ставится в Dockerfile из ASR_TORCH_INDEX_URL: CPU или CUDA).
+# Нижняя граница — проверенная версия, верхняя — следующий мажорный выпуск; сборка берёт самые новые в этих пределах.
+numpy>=2,<3
+redis>=8.1.0,<9
+fastapi>=0.142.2,<1
+uvicorn>=0.54.0,<1
+pydantic>=2.13.5,<3
+pydantic-settings>=2.15.0,<3
+silero-vad>=6.2.3,<7
+# Runtime GGUF-моделей (Q5_K_M): Python-привязки transcribe.cpp с готовыми колёсами (Linux x86_64/arm64, Windows, macOS); модель резидентна в памяти.
+transcribe-cpp>=0.4.0,<0.5   # 0.x: каждый минорный выпуск может менять API — верхняя граница следующий минор; проверено в 0.4.0
+# Silero VAD работает через ONNX Runtime (load_silero_vad(onnx=True)). Диапазон — тот, что требует GigaAM 0.2.0 (onnx==1.19.*, onnxruntime==1.23.*): новее — pip check падает.
+# Остальные зависимости GigaAM (hydra-core, onnx, …) приходят вместе с ним и закреплены в constraints.txt; согласованность проверяет `python -m app.selfcheck` при сборке образа.
+onnxruntime>=1.23,<1.24
+websockets>=15,<16   # WS-шлюз диктовки (uvicorn без него не принимает WebSocket)

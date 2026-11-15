@@ -166,7 +166,8 @@ if ($user === null) {
 echo View::render(__DIR__ . '/../templates/chat/app.php', [
     'csrfToken' => Csrf::token(),
     'user' => $user,
-    'providers' => array_values($llm->access()->allowedProviders($user->groupIds, $user->domainId, $user->ownerKey())),
+    'providers' => array_values($allowedProviders = $llm->access()->allowedProviders($user->groupIds, $user->domainId, $user->ownerKey())),
+    'models' => array_values($llm->models()->allowedFor($allowedProviders)),
     'anonymizationReady' => $llm->anonymizationSettings()->isConfigured(),
     'usage' => $llm->usage()->status($user->ownerKey(), $user->groupIds),
     'extensions' => $llm->fileProcessor()->supportedExtensions(),

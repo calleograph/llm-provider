@@ -1,0 +1,11 @@
+# Внутренний сервис обезличивания. Точные версии всех зависимостей — constraints.txt (сборка воспроизводима).
+fastapi
+uvicorn
+slovnet
+navec
+razdel
+pymorphy3
+pymorphy3-dicts-ru
+dawg2-python
+numpy
+pypdf

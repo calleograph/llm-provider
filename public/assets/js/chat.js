@@ -773,18 +773,33 @@
     var role = message.role === 'user' ? 'user' : (message.role === 'error' ? 'error' : 'assistant');
     var wrap = el('div', 'gpt-msg gpt-msg-' + role);
 
+    var saved = message.context_report;
+    if (typeof saved === 'string') { try { saved = JSON.parse(saved); } catch (e) { saved = null; } }
+    if (saved && !message.fallback_from && saved.fallback_from) message.fallback_from = saved.fallback_from;
+    if (saved && !message.truncated && saved.truncated) message.truncated = true;
     if (role !== 'user') {
       var meta = role === 'error'
         ? 'Запрос не выполнен'
         : [message.provider || (state.providers[message.provider_id] || {}).name, message.model].filter(Boolean).join(' · ') || 'Нейросеть';
       wrap.appendChild(el('div', 'gpt-msg-meta', meta));
+      // Резервирование и обрезанный ответ — видны пользователю явно, а не только администратору.
+      if (message.fallback_from) {
+        wrap.appendChild(el('div', 'gpt-msg-note', 'Модель «' + message.fallback_from + '» не ответила — ответила резервная.'));
+      }
+      if (message.truncated) {
+        wrap.appendChild(el('div', 'gpt-msg-note', 'Ответ упёрся в лимит длины и может быть неполным — попросите продолжить.'));
+      }
     }
+    var report = message.context_report;
+    if (typeof report === 'string') { try { report = JSON.parse(report); } catch (e) { report = null; } }
+    var tokenLine = role === 'assistant' && report ? contextLine(report) : null;
     if (message.attachment_type) {
       wrap.appendChild(el('div', 'gpt-chip', 'Вложение: ' + String(message.attachment_type).toUpperCase() + (message.attachment_size ? ' · ' + formatSize(message.attachment_size) : '')));
     }
     var body = el('div', 'gpt-msg-body');
     renderText(body, message.content);
     wrap.appendChild(body);
+    if (tokenLine) wrap.appendChild(tokenLine);
     if (message.code === 'storage_quota_exceeded') {
       var goToCleanup = el('button', 'btn btn-small btn-primary', 'Управление данными');
       goToCleanup.type = 'button';
@@ -880,6 +895,7 @@
   }
 
   function newConversation(projectId) {
+    convPrefs = { style: null, instructions: '' };
     state.currentId = null;
     state.currentProjectId = projectId || null;
     state.projectData = null;
@@ -893,9 +909,12 @@
     closeSidebarOnMobile();
   }
 
-  function selectProvider(providerId) {
+  // Значение списка — «провайдер:модель». Диалог восстанавливает свою модель (или модель провайдера по умолчанию).
+  function selectProvider(providerId, modelId) {
     if (!els.model || els.model.tagName !== 'SELECT' || !providerId) return;
-    if (els.model.querySelector('option[value="' + providerId + '"]')) els.model.value = String(providerId);
+    var exact = modelId && els.model.querySelector('option[value="' + providerId + ':' + modelId + '"]');
+    var any = els.model.querySelector('option[value^="' + providerId + ':"]');
+    if (exact || any) els.model.value = (exact || any).value;
   }
 
   function openConversation(id) {
@@ -908,7 +927,8 @@
       showChatView();
       clearMessages();
       setHeader(data.conversation.title, data.conversation.project_id);
-      selectProvider(data.conversation.provider_id);
+      selectProvider(data.conversation.provider_id, data.conversation.model_id);
+      convPrefs = { style: data.conversation.style || null, instructions: data.conversation.instructions || '' };
       (data.messages || []).forEach(function (m) { addMessage(m); });
       renderLists();
       closeSidebarOnMobile();
@@ -959,6 +979,9 @@
       els.title.textContent = data.project.name;
       renderInstructions();
       renderSources();
+      $('projectDescription').value = data.project.description || '';
+      $('projectDescriptionStatus').textContent = '';
+      $('projectState').textContent = data.project.state || 'Пока пусто — появится после нескольких сообщений в чатах проекта.';
       renderLists();
       switchProjectTab('chats');
       els.input.placeholder = 'Новый чат в этом проекте';
@@ -1503,12 +1526,18 @@
 
   function send() {
     if (state.sending || !ready) return;
+    if (dictation && ['starting', 'listening', 'finishing'].indexOf(dictation.phase) >= 0) {
+      toast('Сначала остановите запись и проверьте распознанный текст.');
+      return;
+    }
     var text = els.input.value.trim();
     if (text === '' && state.files.length === 0) {
       els.input.focus();
       return;
     }
-    var providerId = els.model ? els.model.value : '';
+    var route = (els.model ? els.model.value : '').split(':');
+    var providerId = route[0] || '';
+    var modelId = route[1] || '';
     if (!providerId) {
       toast('Нет доступной нейросети.');
       return;
@@ -1519,7 +1548,7 @@
 
     var skipAnonymization = !!(els.skipAnonToggle && els.skipAnonToggle.checked);
     var body = form({
-      text: text, provider_id: providerId,
+      text: text, provider_id: providerId, model_id: modelId || null,
       conversation_id: state.currentId || null,
       project_id: !state.currentId && state.currentProjectId ? state.currentProjectId : null,
       skip_anonymization: skipAnonymization ? '1' : null
@@ -1678,9 +1707,143 @@
     }
   });
 
+  /* ---------- расход токенов: из чего состоял контекст ответа ---------- */
+
+  function contextLine(r) {
+    var details = el('details', 'gpt-msg-tokens');
+    var used = (r.input_tokens || r.total || 0);
+    details.appendChild(el('summary', null, 'Контекст ' + formatNumber(used) + ' из ' + formatNumber(r.window || 0) + ' токенов' + (r.output_tokens ? ' · ответ ' + formatNumber(r.output_tokens) : '')));
+    var parts = [
+      ['Инструкции', r.instructions], ['Сводка и состояние проекта', r.summary],
+      ['Источники', r.sources, r.sources_total && r.sources < r.sources_total ? 'из ' + formatNumber(r.sources_total) + ' — переданы подходящие фрагменты' : ''],
+      ['История', r.history, (r.history_messages || 0) + ' сообщ.' + (r.history_dropped ? ', ранние ' + r.history_dropped + ' — в сводке или не переданы' : '')],
+      ['Текущее сообщение', r.current], ['Резерв под ответ', r.reserve]
+    ];
+    var list = el('dl', 'gpt-tokens-list');
+    parts.forEach(function (p) {
+      if (!p[1] && p[0] !== 'История') return;
+      list.appendChild(el('dt', null, p[0]));
+      list.appendChild(el('dd', null, '≈ ' + formatNumber(p[1] || 0) + (p[2] ? ' · ' + p[2] : '')));
+    });
+    details.appendChild(list);
+    if (r.input_tokens) details.appendChild(el('p', 'gpt-tokens-note', 'По данным провайдера: вход ' + formatNumber(r.input_tokens) + ', ответ ' + formatNumber(r.output_tokens || 0) + ' токенов. Остальные цифры — оценка.'));
+    return details;
+  }
+
+  /* ---------- настройки ответа: стиль, инструкция чата, личные инструкции ---------- */
+
+  var styles = {}, styleDefault = 'balanced', prefs = { style: null, instructions: '' }, convPrefs = { style: null, instructions: '' };
+  function openAnswerSettings() {
+    var dialog = $('answerSettings');
+    var select = $('prefStyle');
+    select.textContent = '';
+    var def = el('option', null, 'По умолчанию — ' + (styles[styleDefault] || 'сбалансированный'));
+    def.value = '';
+    select.appendChild(def);
+    Object.keys(styles).forEach(function (k) { var o = el('option', null, styles[k]); o.value = k; select.appendChild(o); });
+    select.value = (state.currentId ? convPrefs.style : null) || prefs.style || '';
+    $('prefPersonal').value = prefs.instructions || '';
+    $('prefDialog').value = state.currentId ? (convPrefs.instructions || '') : '';
+    $('prefDialog').disabled = !state.currentId;
+    $('prefDialogHint').hidden = !!state.currentId;
+    $('answerSettingsStatus').textContent = '';
+    if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', '');
+  }
+  function saveAnswerSettings() {
+    var status = $('answerSettingsStatus');
+    var style = $('prefStyle').value;
+    status.textContent = 'Обезличиваем и сохраняем…';
+    var jobs = [request('POST', 'user_prefs', form({ style: state.currentId ? (prefs.style || '') : style, instructions: $('prefPersonal').value })).then(function (r) { prefs = r; })];
+    if (state.currentId) {
+      jobs.push(request('POST', 'conversation_prefs', form({ id: state.currentId, style: style, instructions: $('prefDialog').value })).then(function (r) { convPrefs = r; }));
+    }
+    Promise.all(jobs).then(function () {
+      $('answerSettings').close();
+      toast('Настройки ответа сохранены.');
+    }).catch(function (error) { status.textContent = error.message; });
+  }
+  $('answerSettingsOpen').addEventListener('click', openAnswerSettings);
+  $('answerSettingsSave').addEventListener('click', saveAnswerSettings);
+  $('projectDescriptionSave').addEventListener('click', function () {
+    var status = $('projectDescriptionStatus');
+    status.textContent = 'Обезличиваем и сохраняем…';
+    request('POST', 'project_update', form({ id: state.currentProjectId, description: $('projectDescription').value })).then(function (r) {
+      $('projectDescription').value = r.description || '';
+      status.textContent = 'Сохранено';
+    }).catch(function (error) { status.textContent = error.message; });
+  });
+
+  /* ---------- голосовой ввод ---------- */
+
+  // Состояния кнопки: idle (ожидание) → starting (разрешение микрофона, билет) → listening (запись)
+  // → finishing (распознаём хвост) → result (текст в поле) | error. Текст только вставляется в поле:
+  // автоматической отправки нет. Отправка во время записи заблокирована.
+  var dictation = null;
+  function initDictation(cfg) {
+    var mic = $('chatMic');
+    if (!mic || !cfg || !cfg.enabled || !window.Dictation || !window.Dictation.supported()) return;
+    var bar = $('dictationBar'), barText = $('dictationText'), barTime = $('dictationTime');
+    var labels = {
+      idle: 'Голосовой ввод: начать запись', starting: 'Подключаем микрофон…', listening: 'Остановить запись',
+      finishing: 'Распознаём речь…', result: 'Голосовой ввод: записать ещё', error: 'Голосовой ввод: повторить'
+    };
+    var texts = { starting: 'Подключаем микрофон…', listening: 'Говорите — текст появится в поле', finishing: 'Распознаём последнюю фразу…', result: 'Текст добавлен в поле — проверьте и отправьте сами' };
+    var seen = {}, timer = null, startedAt = 0, hideTimer = null;
+    function tick() {
+      var s = Math.floor((Date.now() - startedAt) / 1000);
+      barTime.textContent = Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2) + ' / ' + Math.floor(cfg.max_seconds / 60) + ':' + ('0' + (cfg.max_seconds % 60)).slice(-2);
+    }
+    function render(phase, message) {
+      mic.setAttribute('data-state', phase);
+      mic.setAttribute('aria-label', labels[phase] || labels.idle);
+      mic.title = labels[phase] || labels.idle;
+      mic.setAttribute('aria-pressed', phase === 'listening' ? 'true' : 'false');
+      mic.disabled = phase === 'starting' || phase === 'finishing';
+      bar.setAttribute('data-state', phase);
+      clearTimeout(hideTimer);
+      bar.hidden = phase === 'idle' && !message;
+      barText.textContent = message || texts[phase] || '';
+      $('dictationStop').hidden = phase !== 'listening';
+      $('dictationCancel').hidden = !(phase === 'listening' || phase === 'starting' || phase === 'finishing');
+      if (phase === 'listening' && !timer) { startedAt = Date.now(); tick(); timer = setInterval(tick, 500); }
+      if (phase !== 'listening' && phase !== 'finishing') { clearInterval(timer); timer = null; barTime.textContent = ''; }
+      if (phase === 'result') hideTimer = setTimeout(function () { bar.hidden = true; }, 6000);
+      els.send.disabled = state.sending || !ready || phase === 'starting' || phase === 'listening' || phase === 'finishing';
+    }
+    dictation = new window.Dictation({
+      ticket: function () { return request('POST', 'dictation_ticket', form({})); },
+      onPhase: render,
+      onLevel: function (level) { mic.style.setProperty('--level', Math.min(1, level * 6).toFixed(2)); },
+      onFinal: function (seq, text) {
+        var input = els.input;
+        var r = window.insertDictated(input.value, input.selectionStart == null ? input.value.length : input.selectionStart, text, seq, seen);
+        input.value = r.value;
+        input.setSelectionRange(r.caret, r.caret);
+        autosize();
+      }
+    });
+    mic.hidden = false;
+    mic.addEventListener('click', function () {
+      if (dictation.phase === 'listening') { dictation.stop(); return; }
+      seen = {};
+      els.input.focus();
+      dictation.start();
+    });
+    $('dictationStop').addEventListener('click', function () { dictation.stop(); });
+    $('dictationCancel').addEventListener('click', function () { dictation.cancel(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && (dictation.phase === 'listening' || dictation.phase === 'starting')) dictation.cancel();
+    });
+    window.addEventListener('pagehide', function () { if (dictation.phase !== 'idle') dictation.cancel(); });
+  }
+
   setSending(false);
 
   request('GET', 'bootstrap').then(function (data) {
+    initDictation(data.dictation);
+    styles = data.styles || {};
+    styleDefault = data.style_default || 'balanced';
+    prefs = data.prefs || prefs;
     (data.providers || []).forEach(function (p) { state.providers[p.id] = p; });
     state.conversations = data.conversations || [];
     state.projects = data.projects || [];

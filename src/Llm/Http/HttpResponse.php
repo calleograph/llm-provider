@@ -10,7 +10,24 @@ final class HttpResponse
         public readonly int $status,
         public readonly string $body,
         public readonly int $durationMs = 0,
+        /** Заголовки ответа в нижнем регистре (нужен Retry-After при перегрузке провайдера). */
+        public readonly array $headers = [],
     ) {
+    }
+
+    /** Retry-After в секундах (число или HTTP-дата), null — не задан или некорректен. */
+    public function retryAfter(?int $now = null): ?int
+    {
+        $value = trim((string) ($this->headers['retry-after'] ?? ''));
+        if ($value === '') {
+            return null;
+        }
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+        $ts = strtotime($value);
+
+        return $ts !== false ? max(0, $ts - ($now ?? time())) : null;
     }
 
     public function isSuccess(): bool

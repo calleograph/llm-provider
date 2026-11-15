@@ -1,0 +1,57 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  private-data:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_private_data.py
+
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: for f in install.sh scripts/*.sh scripts/lib/*.sh; do bash -n "$f"; done
+      - name: shellcheck
+        run: sudo apt-get install -y shellcheck >/dev/null && shellcheck -S error install.sh scripts/*.sh scripts/lib/*.sh
+      - name: compose config
+        run: cp .env.example .env && sed -i 's/^APP_MASTER_KEY=.*/APP_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/; s/^INTERNAL_API_TOKEN=.*/INTERNAL_API_TOKEN=x/; s/^DICTATION_SECRET=.*/DICTATION_SECRET=x/; s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=x/' .env && docker compose config -q
+
+  php:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build php image
+        run: docker build -f docker/php/Dockerfile -t llmp-php:ci .
+      - name: "phpunit в образе (ext-ldap, ext-zip — без пропусков)"
+        run: |
+          curl -sSLo phpunit.phar https://phar.phpunit.de/phpunit-11.phar
+          docker run --rm --user 33 --tmpfs /data/app:uid=33 -v "$PWD/phpunit.phar:/opt/phpunit.phar:ro" -w /srv/app llmp-php:ci php /opt/phpunit.phar --do-not-cache-result
+
+  anonymizer:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: services/anonymizer } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt -c constraints.txt -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  asr:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: services/asr } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # тесты используют подставные VAD и провайдер — torch и GigaAM не нужны
+      - run: pip install "numpy==2.5.4" "redis>=8.1,<9" "fastapi==0.149.0" "uvicorn==0.54.0" "pydantic>=2.13,<3" "pydantic-settings>=2.15,<3" pytest pytest-asyncio fakeredis httpx
+      - run: python -m pytest -q

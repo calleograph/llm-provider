@@ -15,7 +15,7 @@ use App\Http\View;
 <title>Вход — корпоративный AI-чат</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="icon" type="image/png" href="assets/favicon.png">
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?php echo \App\Http\View::asset('assets/css/app.css'); ?>">
 </head>
 <body>
 <div class="pwd-page admin-login-page">
@@ -71,6 +71,6 @@ use App\Http\View;
     </div>
   </div>
 </div>
-<script src="assets/js/app.js"></script>
+<script src="<?php echo \App\Http\View::asset('assets/js/app.js'); ?>"></script>
 </body>
 </html>

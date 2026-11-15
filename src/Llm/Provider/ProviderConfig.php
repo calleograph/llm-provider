@@ -38,7 +38,24 @@ final class ProviderConfig
         public readonly ?float $maxPricePerMtoken = null,
         /** provider.allow_fallbacks — при исчерпании подходящих маршрутов не отказывать, а взять любой доступный. */
         public readonly bool $allowFallbacks = true,
+        /** Параметры выбранной модели (llm_models): температура, null — по умолчанию провайдера. */
+        public readonly ?float $temperature = null,
+        /** Модель (llm_models.id), для которой собран снимок; null — модель провайдера по умолчанию. */
+        public readonly ?int $modelId = null,
     ) {
+    }
+
+    /** Снимок для конкретной модели того же провайдера: свой идентификатор модели, длина ответа, температура. */
+    public function withModel(int $modelId, string $model, int $maxTokens, ?float $temperature): self
+    {
+        return new self($this->id, $this->name, $this->type, $this->baseUrl, $this->endpoint, $this->apiKey, $model, $this->apiVersion,
+            $this->connectTimeout, $this->responseTimeout, $maxTokens, $this->extraHeaders, $this->useCorporateCa, $this->isEnabled,
+            $this->routingProvider, $this->sortByPrice, $this->maxPricePerMtoken, $this->allowFallbacks, $temperature, $modelId);
+    }
+
+    public function withoutOptionalParams(): self
+    {
+        return $this->modelId === null ? $this : $this->withModel($this->modelId, $this->model, $this->maxTokens, null);
     }
 
     public function url(): string

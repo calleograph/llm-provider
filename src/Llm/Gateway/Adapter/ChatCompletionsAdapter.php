@@ -36,11 +36,17 @@ abstract class ChatCompletionsAdapter implements LlmAdapter
             'messages' => $payloadMessages,
             $this->maxTokensField() => $maxTokens,
         ];
+        if ($provider->temperature !== null) {
+            $payload['temperature'] = $provider->temperature;
+        }
 
-        if ($provider->routingProvider !== null) {
+        // Параметры маршрутизации Polza/OpenRouter — только для OpenAI-совместимых шлюзов:
+        // официальный OpenAI API отвечает 400 на незнакомое поле provider.
+        $routable = $this->type() === 'openai_compatible';
+        if ($routable && $provider->routingProvider !== null) {
             // Жёсткая фиксация маршрута у мультипровайдерного шлюза (см. LlmSchema).
             $payload['provider'] = ['only' => [$provider->routingProvider]];
-        } elseif ($provider->sortByPrice) {
+        } elseif ($routable && $provider->sortByPrice) {
             // Автовыбор самого дешёвого доступного маршрута; max_price (если
             // задан) отсекает дорогие варианты по обоим направлениям сразу
             // (в терминах Polza — prompt/completion, ₽ за млн токенов).
@@ -76,7 +82,7 @@ abstract class ChatCompletionsAdapter implements LlmAdapter
     {
         $json = $response->json();
         if (!$response->isSuccess()) {
-            throw LlmException::fromHttpStatus($response->status, $json, mb_substr($response->body, 0, 300));
+            throw LlmException::fromHttpStatus($response->status, $json, mb_substr($response->body, 0, 300), $response->retryAfter());
         }
         if ($json === null || !isset($json['choices'][0]) || !is_array($json['choices'][0])) {
             throw new LlmException('invalid_response', 'Ответ не содержит choices[0].');

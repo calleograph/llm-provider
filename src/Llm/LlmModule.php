@@ -41,6 +41,8 @@ use PDO;
  */
 final class LlmModule
 {
+    private ?\Closure $sleeper = null;
+
     private array $instances = [];
 
     public function __construct(
@@ -112,7 +114,43 @@ final class LlmModule
             $this->transport(),
             $this->caBundleResolver(),
             $this->diagnosticLogger,
+            $this->models(),
+            $this->modelHealth(),
+            $this->sleeper,
+            fn (string $template, array $vars, string $key) => $this->alerts()->notify($template, $vars, $key),
         );
+    }
+
+    public function models(): \App\Llm\Provider\ModelRepository
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Llm\Provider\ModelRepository($this->pdo);
+    }
+
+    public function mailSettings(): \App\Mail\MailSettings
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Mail\MailSettings($this->appSettings);
+    }
+
+    public function mailQueue(): \App\Mail\MailQueue
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Mail\MailQueue($this->pdo);
+    }
+
+    public function alerts(): \App\Mail\Alerts
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Mail\Alerts($this->mailSettings(), $this->mailQueue(), $this->appSettings);
+    }
+
+    public function modelHealth(): \App\Llm\Gateway\ModelHealthRepository
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Llm\Gateway\ModelHealthRepository($this->pdo);
+    }
+
+    /** Тесты: пауза перед повтором без реального ожидания. */
+    public function setSleeper(\Closure $sleeper): void
+    {
+        $this->sleeper = $sleeper;
+        unset($this->instances['gateway'], $this->instances['chatService']);
     }
 
     public function fileSettings(): FileProcessingSettings
@@ -170,6 +208,11 @@ final class LlmModule
         );
     }
 
+    public function dictation(): \App\Llm\Dictation\DictationTicket
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Llm\Dictation\DictationTicket($this->chatSettings());
+    }
+
     public function chatService(): ChatService
     {
         return $this->instances[__FUNCTION__] ??= new ChatService(
@@ -183,7 +226,14 @@ final class LlmModule
             $this->projects(),
             $this->usage(),
             $this->storageQuota(),
+            $this->models(),
+            $this->summaries(),
         );
+    }
+
+    public function summaries(): \App\Llm\Context\SummaryService
+    {
+        return $this->instances[__FUNCTION__] ??= new \App\Llm\Context\SummaryService($this->pdo, $this->gateway());
     }
 
     public function backup(\App\Config\LdapConfigRepository $ldapConfigs): \App\Llm\Backup\ConfigBackupService

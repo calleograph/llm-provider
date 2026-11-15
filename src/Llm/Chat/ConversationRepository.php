@@ -64,7 +64,7 @@ final class ConversationRepository
     public function messages(int $conversationId, string $ownerKey): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT m.id, m.role, m.content, m.content_z, m.provider_id, m.model, m.attachment_type, m.attachment_size, m.unanonymized, m.created_at
+            'SELECT m.id, m.role, m.content, m.content_z, m.provider_id, m.model, m.attachment_type, m.attachment_size, m.unanonymized, m.context_report, m.created_at
              FROM llm_messages m JOIN llm_conversations c ON c.id = m.conversation_id
              WHERE m.conversation_id = :id AND c.owner_key = :owner ORDER BY m.id'
         );
@@ -108,6 +108,54 @@ final class ConversationRepository
     {
         $stmt = $this->pdo->prepare('UPDATE llm_conversations SET provider_id = :p, updated_at = :now WHERE id = :id');
         $stmt->execute(['p' => $providerId, 'now' => gmdate('c'), 'id' => $conversationId]);
+    }
+
+    /** Модель, выбранная в диалоге (llm_models.id) — чат восстанавливает выбор при открытии. */
+    public function setModel(int $conversationId, int $modelId): void
+    {
+        $this->pdo->prepare('UPDATE llm_conversations SET model_id = :m WHERE id = :id')->execute(['m' => $modelId, 'id' => $conversationId]);
+    }
+
+    /** @param array<string,int> $report */
+    public function setContextReport(int $messageId, array $report): void
+    {
+        $this->pdo->prepare('UPDATE llm_messages SET context_report = ? WHERE id = ?')->execute([json_encode($report), $messageId]);
+    }
+
+    /**
+     * Стиль и инструкции: диалога (llm_conversations) и личные (llm_users). Тексты хранятся только обезличенными.
+     *
+     * @return array{style:?string,dialog:string,personal:string}
+     */
+    public function preferences(?int $conversationId, string $ownerKey): array
+    {
+        $user = $this->pdo->prepare('SELECT style, instructions_z FROM llm_users WHERE owner_key = ?');
+        $user->execute([$ownerKey]);
+        $u = $user->fetch() ?: [];
+        $c = [];
+        if ($conversationId !== null) {
+            $conv = $this->pdo->prepare('SELECT style, instructions_z FROM llm_conversations WHERE id = ? AND owner_key = ?');
+            $conv->execute([$conversationId, $ownerKey]);
+            $c = $conv->fetch() ?: [];
+        }
+        $text = static fn (mixed $z): string => CompactText::unpack(is_resource($z) ? (string) stream_get_contents($z) : (is_string($z) ? $z : null));
+
+        return [
+            'style' => ($c['style'] ?? null) ?: (($u['style'] ?? null) ?: null),
+            'dialog' => $text($c['instructions_z'] ?? null),
+            'personal' => $text($u['instructions_z'] ?? null),
+        ];
+    }
+
+    public function setUserPreferences(string $ownerKey, ?string $style, string $anonymizedInstructions): void
+    {
+        $this->pdo->prepare('UPDATE llm_users SET style = ?, instructions_z = ? WHERE owner_key = ?')
+            ->execute([$style, $anonymizedInstructions !== '' ? CompactText::pack($anonymizedInstructions) : null, $ownerKey]);
+    }
+
+    public function setConversationPreferences(int $id, string $ownerKey, ?string $style, ?string $anonymizedInstructions): bool
+    {
+        return $this->updateOwned($id, $ownerKey, 'style = :s, instructions_z = :z', ['s' => $style, 'z' => $anonymizedInstructions !== null && $anonymizedInstructions !== '' ? CompactText::pack($anonymizedInstructions) : null]);
     }
 
     public function setPinned(int $id, string $ownerKey, bool $pinned): bool

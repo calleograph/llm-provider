@@ -6,7 +6,7 @@ use App\Http\View;
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow"><title>Первичная настройка</title>
-<link rel="stylesheet" href="../assets/css/app.css">
+<link rel="stylesheet" href="<?php echo \App\Http\View::asset('../assets/css/app.css'); ?>">
 </head><body>
 <div class="pwd-page admin-login-page"><div class="admin-login-shell"><div class="admin-login-intro">
   <span class="admin-login-brand">Корпоративный AI-чат</span><p>Первичный запуск</p><span class="admin-login-mark" aria-hidden="true">AD</span>
@@ -20,4 +20,4 @@ use App\Http\View;
   <div class="pwd-field"><label class="field-label" for="password">Новый пароль</label><input class="text-input" id="password" name="password" type="password" autocomplete="new-password" required minlength="14" autofocus></div>
   <div class="pwd-field"><label class="field-label" for="password_confirm">Повторите пароль</label><input class="text-input" id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required minlength="14"></div>
   <button class="btn btn-primary btn-block" type="submit">Сохранить и продолжить</button>
-</form></div></div></div><script src="../assets/js/app.js"></script></body></html>
+</form></div></div></div><script src="<?php echo \App\Http\View::asset('../assets/js/app.js'); ?>"></script></body></html>

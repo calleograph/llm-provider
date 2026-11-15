@@ -88,8 +88,10 @@ final class ProviderRepository
             'extra_header_names' => $extraHeaders ? implode(', ', array_keys($extraHeaders)) : null,
             'now' => $now,
         ]);
+        $id = (int) $this->pdo->lastInsertId();
+        \App\Llm\LlmSchema::seedDefaultModels($this->pdo);
 
-        return (int) $this->pdo->lastInsertId();
+        return $id;
     }
 
     /**
@@ -119,6 +121,12 @@ final class ProviderRepository
 
         $stmt = $this->pdo->prepare("UPDATE llm_providers SET {$sets} WHERE id = :id");
         $stmt->execute($params);
+        // Модель провайдера по умолчанию следует полям «Модель» и «Макс. токенов ответа» формы провайдера.
+        $this->pdo->prepare('UPDATE llm_models SET model = :model, display_name = CASE WHEN display_name = model THEN :model ELSE display_name END,
+                             max_output_tokens = :max_tokens, updated_at = :now WHERE provider_id = :id AND is_default = 1
+                             AND NOT EXISTS (SELECT 1 FROM llm_models o WHERE o.provider_id = :id AND o.model = :model AND o.is_default = 0)')
+            ->execute(['model' => $params['model'], 'max_tokens' => $params['max_tokens'], 'now' => $params['now'], 'id' => $id]);
+        \App\Llm\LlmSchema::seedDefaultModels($this->pdo);
     }
 
     public function setEnabled(int $id, bool $enabled): void

@@ -24,7 +24,19 @@ final class AnonymizationSettings
     public const PROFILE_DOCCLEAN = 'docclean';
     /** Произвольный JSON API с настраиваемыми именами полей. */
     public const PROFILE_GENERIC = 'generic';
-    public const PROFILES = [self::PROFILE_DOCCLEAN, self::PROFILE_GENERIC];
+    /** Встроенный Python-сервис обезличивания (контейнер anonymizer, перенос из «Переговорки») — основной режим. */
+    public const PROFILE_INTERNAL = 'internal';
+    public const PROFILES = [self::PROFILE_INTERNAL, self::PROFILE_DOCCLEAN, self::PROFILE_GENERIC];
+
+    /** Профили встроенного движка и действия по категориям (engine.ACTIONS / CATEGORIES). */
+    public const INTERNAL_PROFILES = ['basic' => 'Базовый', 'strict' => 'Строгий', 'custom' => 'Настраиваемый'];
+    public const INTERNAL_ACTIONS = ['keep' => 'оставить', 'mask' => 'метка', 'pseudonym' => 'обозначение с номером'];
+    public const INTERNAL_CATEGORIES = [
+        'person' => 'Люди (ФИО)', 'organization' => 'Организации', 'location' => 'Места', 'address' => 'Адреса', 'phone' => 'Телефоны',
+        'email' => 'Почта', 'ip' => 'IP-адреса', 'host' => 'Серверы', 'url' => 'Ссылки', 'login' => 'Учётные записи',
+        'id_number' => 'ИНН, СНИЛС, ОГРН, паспорт', 'bank' => 'Карты и счета', 'health' => 'Здоровье', 'marker' => 'Грифы',
+        'doc_number' => 'Номера договоров и документов', 'money' => 'Суммы', 'project' => 'Проекты', 'custom' => 'Свой словарь',
+    ];
 
     public const DOCCLEAN_MODES = ['ai_ready', 'full', 'personal_corporate', 'personal'];
     public const DOCCLEAN_GROUPS = ['pdn', 'corporate', 'secrets', 'network', 'other'];
@@ -37,7 +49,15 @@ final class AnonymizationSettings
     private const PREFIX = 'anon_';
 
     private const DEFAULTS = [
-        'profile' => self::PROFILE_DOCCLEAN,
+        'profile' => self::PROFILE_INTERNAL,
+        'internal_profile' => 'basic',
+        'internal_terms' => '',           // строки «термин;категория;замена» — словарь организации (клиенты, проекты, системы)
+        'internal_exceptions' => '',      // по одному в строке — никогда не заменять (кроме секретов)
+        'internal_domains' => '',         // внутренние домены — адреса и серверы в них заменяются
+        'internal_custom_actions' => '',  // JSON {категория: keep|mask|pseudonym} для профиля «Настраиваемый»
+        'internal_person_format' => 'short',
+        'internal_org_scope' => 'legal',
+        'internal_timeout' => '120',
         'docclean_mode' => 'ai_ready',
         'docclean_groups' => '',
         'file_mode' => self::FILE_MODE_API,
@@ -97,7 +117,57 @@ final class AnonymizationSettings
 
     public function isConfigured(): bool
     {
+        if ($this->isInternal()) {
+            return self::internalUrl() !== '' && self::internalToken() !== '';
+        }
+
         return $this->get('base_url') !== '' && ($this->isDocClean() || $this->get('endpoint') !== '');
+    }
+
+    public function isInternal(): bool
+    {
+        return $this->get('profile') === self::PROFILE_INTERNAL;
+    }
+
+    /** Адрес сервиса во внутренней сети Compose — из окружения, не из БД (в браузер не попадает). */
+    public static function internalUrl(): string
+    {
+        return rtrim((string) getenv('ANONYMIZER_URL'), '/');
+    }
+
+    public static function internalToken(): string
+    {
+        return (string) getenv('INTERNAL_API_TOKEN');
+    }
+
+    /**
+     * Настройки движка для запроса к сервису (тот же набор полей, что AnonymizerSettings «Переговорки»).
+     *
+     * @param array<string,string> $draft непроверенный черновик из лаборатории админки (поверх сохранённых)
+     * @return array<string,mixed>
+     */
+    public function internalEngineSettings(array $draft = []): array
+    {
+        $v = static fn (string $k) => array_key_exists($k, $draft) ? (string) $draft[$k] : null;
+        $get = fn (string $k): string => $v($k) ?? $this->get($k);
+        $lines = static fn (string $text): array => array_values(array_filter(array_map('trim', preg_split('/\R/u', $text) ?: []), static fn ($x) => $x !== ''));
+        $terms = [];
+        foreach ($lines($get('internal_terms')) as $line) {
+            $parts = array_map('trim', explode(';', $line));
+            if ($parts[0] !== '') {
+                $terms[] = ['term' => mb_substr($parts[0], 0, 200), 'category' => $parts[1] ?? 'custom', 'replacement' => mb_substr($parts[2] ?? '', 0, 100)];
+            }
+        }
+        $actions = json_decode($get('internal_custom_actions'), true);
+
+        return [
+            'terms' => $terms,
+            'exceptions' => $lines($get('internal_exceptions')),
+            'internal_domains' => $lines($get('internal_domains')),
+            'custom_actions' => is_array($actions) ? $actions : [],
+            'custom_person_format' => $get('internal_person_format'),
+            'custom_org_scope' => $get('internal_org_scope'),
+        ];
     }
 
     public function isDocClean(): bool
@@ -176,9 +246,12 @@ final class AnonymizationSettings
     public static function validate(array $values): array
     {
         $errors = [];
-        $profile = $values['profile'] ?? self::PROFILE_DOCCLEAN;
+        $profile = $values['profile'] ?? self::PROFILE_INTERNAL;
         if (!in_array($profile, self::PROFILES, true)) {
             $errors['profile'] = 'Недопустимый тип API.';
+        }
+        if ($profile === self::PROFILE_INTERNAL) {
+            return $errors + self::validateInternal($values);
         }
         if ($profile === self::PROFILE_DOCCLEAN) {
             if (!in_array($values['docclean_mode'] ?? '', self::DOCCLEAN_MODES, true)) {
@@ -232,6 +305,43 @@ final class AnonymizationSettings
             $decoded = json_decode($extra, true);
             if (!is_array($decoded) || array_is_list($decoded)) {
                 $errors['extra_body'] = 'Ожидается JSON-объект, например {"lang":"ru"}.';
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * @param array<string,string> $values
+     * @return array<string,string>
+     */
+    public static function validateInternal(array $values): array
+    {
+        $errors = [];
+        if (!array_key_exists($values['internal_profile'] ?? '', self::INTERNAL_PROFILES)) {
+            $errors['internal_profile'] = 'Профиль: базовый, строгий или настраиваемый.';
+        }
+        if (!in_array($values['internal_person_format'] ?? 'short', ['short', 'role'], true)) {
+            $errors['internal_person_format'] = 'Недопустимый формат имён.';
+        }
+        if (!in_array($values['internal_org_scope'] ?? 'legal', ['legal', 'all'], true)) {
+            $errors['internal_org_scope'] = 'Недопустимая область организаций.';
+        }
+        $actions = trim($values['internal_custom_actions'] ?? '');
+        if ($actions !== '') {
+            $decoded = json_decode($actions, true);
+            if (!is_array($decoded) || array_diff_key($decoded, self::INTERNAL_CATEGORIES) !== [] || array_diff($decoded, array_keys(self::INTERNAL_ACTIONS)) !== []) {
+                $errors['internal_custom_actions'] = 'Неизвестная категория или действие.';
+            }
+        }
+        $timeout = (int) ($values['internal_timeout'] ?? 120);
+        if ($timeout < 5 || $timeout > 600) {
+            $errors['internal_timeout'] = 'Допустимый диапазон: 5–600.';
+        }
+        foreach (['internal_terms' => 5000, 'internal_exceptions' => 5000, 'internal_domains' => 500] as $field => $maxLines) {
+            $text = (string) ($values[$field] ?? '');
+            if (count(preg_split('/\R/u', $text) ?: []) > $maxLines || mb_strlen($text) > 500000) {
+                $errors[$field] = 'Не больше ' . $maxLines . ' строк.';
             }
         }
 

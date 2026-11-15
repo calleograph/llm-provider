@@ -129,8 +129,8 @@ if (!AdminSession::isLoggedIn($adminIdleTimeoutMinutes > 0 ? $adminIdleTimeoutMi
 $section = $_GET['section'] ?? 'status';
 $allowedSections = [
     'status', 'services', 'ldap', 'access',
-    'chat_access', 'llm_providers', 'llm_limits', 'llm_users', 'anonymization',
-    'log', 'system',
+    'chat_access', 'llm_providers', 'llm_models', 'llm_limits', 'llm_users', 'anonymization', 'mail',
+    'log', 'system', 'maintenance',
 ];
 if (!in_array($section, $allowedSections, true)) {
     $section = 'status';

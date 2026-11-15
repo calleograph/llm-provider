@@ -10,8 +10,10 @@ use RuntimeException;
 /**
  * Шифрование значений в состоянии покоя (AEAD, XChaCha20-Poly1305 либо AES-256-GCM),
  * master key берётся из ENV APP_MASTER_KEY либо из файла var/data/master.key
- * (права 0600, вне document root). Используется для любых секретов,
- * которые в будущем потребуется сохранять (сейчас — CSRF/session secret).
+ * (права 0600, вне document root). Шифрует API-ключи провайдеров, пароли
+ * LDAP/SMTP и прочие секреты в БД. Ключ создаётся только на свежей установке:
+ * если приложение уже установлено, а ключа нет — явная ошибка (иначе все
+ * сохранённые секреты молча стали бы нерасшифровываемыми).
  */
 final class SecretBox
 {
@@ -36,6 +38,9 @@ final class SecretBox
 
         $keyFile = Paths::secretKeyFile();
         if (!is_file($keyFile)) {
+            if (is_file(Paths::installedMarker())) {
+                throw new RuntimeException('Мастер-ключ не найден (APP_MASTER_KEY или ' . $keyFile . '): восстановите его из резервной копии, сохранённые секреты без него не расшифровать.');
+            }
             Paths::ensureDirectories();
             $generated = random_bytes(32);
             file_put_contents($keyFile, base64_encode($generated), LOCK_EX);

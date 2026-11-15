@@ -1,0 +1,183 @@
+"""Точка входа ASR-сервиса: python -m app.main"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hmac
+import logging
+import os
+import signal
+
+import uvicorn
+from redis.asyncio import Redis
+
+from .audio.vad import silero_factory
+from .catalog import load_catalog
+from .config import AsrSettings
+from .health import create_health_app
+from .ws_gateway import mount_dictation
+from .inference import InferenceQueue
+from .logging_setup import configure_logging
+from .dictation import DictationManager
+from .model_manager import ModelManager
+from .pipeline import recorder_stats
+from .pipeline_health import HEALTH
+from .publisher import SegmentPublisher, heartbeat_loop
+from .runtime_config import VAD_CONFIG_KEY, apply_vad, current_vad, segmenter_config
+
+log = logging.getLogger("asr")
+DESIRED_MODEL_KEY = "asr:desired_model"  # желаемая модель из админки (пишет backend); ASR применяет её сам
+
+
+def _pkg_version(name: str) -> str | None:
+    try:
+        from importlib.metadata import version
+
+        return version(name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def redis_probe(redis: Redis, state: dict, interval: float = 5.0) -> None:
+    """Связь с Redis для /readyz (раньше её отражал цикл команд встреч, которого в LLM-провайдере нет)."""
+    while True:
+        try:
+            await redis.ping()
+            state.update(ok=True, error=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            state.update(ok=False, error=type(exc).__name__)
+        await asyncio.sleep(interval)
+
+
+# Пакеты, версии которых backend сверяет с манифестом релиза (backend/app/components.json): показывается то, что РАБОТАЕТ в этом контейнере.
+TRACKED_PACKAGES = ("transcribe-cpp", "torch", "torchaudio", "silero-vad", "numpy", "fastapi", "uvicorn", "pydantic", "pydantic-settings", "redis")
+
+
+def runtime_packages() -> dict[str, str | None]:
+    import sys  # noqa: PLC0415
+
+    out: dict[str, str | None] = {n: _pkg_version(n) for n in TRACKED_PACKAGES}
+    out["python"] = ".".join(map(str, sys.version_info[:3]))
+    out["gigaam"] = os.environ.get("GIGAAM_GIT_COMMIT") or None
+    return out
+
+
+async def watch_desired_model(redis: Redis, models: ModelManager, interval: float = 5.0) -> None:
+    """Применяет выбор администратора: backend пишет желаемую модель в Redis, ASR переключается сам.
+    Неудавшийся выбор повторно не загружается, пока выбор не изменится (иначе — цикл неудачных загрузок)."""
+    while True:
+        try:
+            apply_vad(await redis.get(VAD_CONFIG_KEY))
+            want = await redis.get(DESIRED_MODEL_KEY)
+            if want and want != models.active_id and want != models.failed_desired and models.loading_id is None:
+                await models.activate(want)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.warning("Ошибка применения выбранной модели", exc_info=True)
+        await asyncio.sleep(interval)
+
+
+async def amain() -> None:
+    settings = AsrSettings()
+    configure_logging(settings.log_level, settings.log_format)
+    redis = Redis.from_url(settings.effective_redis_url, decode_responses=True)
+    holder: dict = {}
+
+    def busy_reason() -> str | None:
+        d = holder.get("dictation")
+        return "Идёт диктовка: тест нагрузит распознавание и исказит цифры. Повторите позже." if d and d.active else None
+
+    models = ModelManager(settings, load_catalog(settings.asr_model_dir, settings.asr_model_name), busy_reason=busy_reason)
+    queue = InferenceQueue(models, max_concurrent=settings.asr_max_concurrent_inference, queue_size=settings.asr_queue_size, language=settings.asr_language)
+    publisher = SegmentPublisher(redis, lambda: models.info)
+    vad_factory = silero_factory()
+    dictation = DictationManager(redis, queue, vad_factory, lambda: segmenter_config(settings), queue_size=settings.asr_queue_size)
+    holder["dictation"] = dictation
+    redis_state = {"ok": True, "error": None}
+
+    def snapshot() -> dict:
+        st = models.status()
+        return {
+            "model_loaded": models.is_ready(), "model_error": next((m["error"] for m in st["models"] if m["status"] == "error" and m["error"]), None),
+            "provider": models.info.as_dict(), "active_model": st["active_id"], "loading_model": st["loading_id"],
+            "models": [{k: m[k] for k in ("id", "title", "runtime", "quant", "status", "present", "size_bytes", "error")} for m in st["models"]],
+            "queue_depth": queue.depth, "queue_capacity": settings.asr_queue_size,
+            "inference_busy": queue.busy, "max_concurrent": settings.asr_max_concurrent_inference,
+            "processed": queue.processed, "dropped": queue.dropped, "errors": queue.errors, **queue.latency_stats(),
+            "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"), "transcribe_cpp": _pkg_version("transcribe-cpp"), "packages": runtime_packages(), "pipeline": HEALTH.snapshot(),
+            **recorder_stats.snapshot(), "recorder_queue": recorder_stats.snapshot()["recorder_queue_kb"], "vad": current_vad(),
+            "redis_ok": redis_state["ok"], "commands_error": redis_state["error"], "dictation": {"active": len(dictation.active), **dictation.stats}, "version": settings.app_version, "commit": settings.app_git_commit, "built_at": settings.app_built_at,
+        }
+
+    async def selftest() -> dict:
+        import time as _t
+
+        import numpy as _np
+
+        started = _t.monotonic()
+        res = await asyncio.to_thread(models.transcribe, _np.zeros(16000, dtype=_np.int16), language=settings.asr_language)
+        return {"ok": True, "ms": int((_t.monotonic() - started) * 1000), "provider": models.info.as_dict(), "text_len": len(res.text)}
+
+    def authorized(token: str) -> bool:
+        return not settings.internal_api_token or hmac.compare_digest(token, settings.internal_api_token)
+
+    from .selfcheck import vad_problem  # noqa: PLC0415
+
+    async def check_vad() -> None:
+        vp = await asyncio.to_thread(vad_problem)  # реальная инициализация VAD на старте: ошибка видна сразу, а не при первом участнике
+        HEALTH.fail("vad", RuntimeError(vp)) if vp else HEALTH.ok("vad")
+
+    # health-сервер поднимаем СРАЗУ: /healthz отвечает, пока модель ещё грузится.
+    web = create_health_app(snapshot, selftest, models=models, authorized=authorized)
+    mount_dictation(web, redis, snapshot)
+    server = uvicorn.Server(uvicorn.Config(web, host="0.0.0.0",
+                                           port=settings.health_port, log_level="warning", access_log=False))
+    health_task = asyncio.create_task(server.serve(), name="health")
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
+
+    tasks: list[asyncio.Task] = []
+    try:
+        await check_vad()
+        wanted = await redis.get(DESIRED_MODEL_KEY) or settings.asr_model_id
+        res = await models.activate(wanted)  # ошибка загрузки НЕ останавливает сервис: админ увидит причину и сможет выбрать другую модель
+        if not res.get("ok"):
+            log.error("Стартовая модель не загружена — сервис остаётся not-ready, выбор модели доступен в админке", extra={"error": res.get("error"), "model": wanted})
+        apply_vad(await redis.get(VAD_CONFIG_KEY))
+        threads = models.threads.get("intra") or settings.asr_cpu_threads or (os.cpu_count() or 1)
+        if threads * settings.asr_max_concurrent_inference > (os.cpu_count() or 1):
+            log.warning("Потоков больше, чем ядер: ASR_CPU_THREADS × ASR_MAX_CONCURRENT_INFERENCE превышает число CPU — параллельные распознавания "
+                        "будут мешать друг другу и растить задержку; уменьшите потоки или ASR_MAX_CONCURRENT_INFERENCE (замер: scripts/asr-bench.sh --concurrency)",
+                        extra={"threads": threads, "concurrent": settings.asr_max_concurrent_inference, "cpu_count": os.cpu_count()})
+        queue.start()
+        tasks.append(asyncio.create_task(heartbeat_loop(redis, snapshot), name="heartbeat"))
+        tasks.append(asyncio.create_task(watch_desired_model(redis, models), name="model-watch"))
+        tasks.append(asyncio.create_task(redis_probe(redis, redis_state), name="redis-probe"))
+        tasks.append(asyncio.create_task(dictation.run(), name="dictation"))
+        log.info("ASR-сервис запущен", extra={"cpu_count": os.cpu_count(), "torch_threads": models.threads.get("intra"), "torch_interop_threads": models.threads.get("interop"),
+                                         "max_concurrent_inference": settings.asr_max_concurrent_inference, "model": models.active_id, "ready": models.is_ready(), "device": settings.asr_device})
+        await stop.wait()
+    finally:
+        for t in tasks:
+            t.cancel()
+        with contextlib.suppress(Exception):
+            await dictation.stop_all()
+        with contextlib.suppress(Exception):
+            await queue.stop()
+        with contextlib.suppress(Exception):
+            await redis.delete("asr:heartbeat")
+            await redis.aclose()
+        server.should_exit = True
+        with contextlib.suppress(Exception):
+            await health_task
+
+
+if __name__ == "__main__":
+    asyncio.run(amain())

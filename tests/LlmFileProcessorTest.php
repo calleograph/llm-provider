@@ -80,6 +80,9 @@ final class LlmFileProcessorTest extends TestCase
         $zip->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
         foreach ($entries as $entry => $content) {
             $zip->addFromString($entry, $content);
+            if ($entry === 'mimetype') {
+                $zip->setCompressionName($entry, \ZipArchive::CM_STORE);   // ODT: несжатый mimetype первым — по нему узнаётся формат
+            }
         }
         $zip->close();
 
@@ -119,6 +122,52 @@ final class LlmFileProcessorTest extends TestCase
         $this->assertStringContainsString("Приказ\t№ 5", $result->text);
         $this->assertStringContainsString('Иванов', $result->text);
         $this->assertStringContainsString('ООО Ромашка', $result->text);
+        $this->assertNoTempLeft();
+    }
+
+    public function testDocxCommentsAreCheckedAndImagesNextToTextAreBlockedWithoutOcr(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('ext-zip недоступно.');
+        }
+        $ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+        $path = $this->zip('comments.docx', [
+            'word/document.xml' => '<?xml version="1.0"?><w:document ' . $ns . '><w:body><w:p><w:r><w:t>Текст</w:t></w:r></w:p></w:body></w:document>',
+            'word/comments.xml' => '<?xml version="1.0"?><w:comments ' . $ns . '><w:comment><w:p><w:r><w:t>Позвонить Сидорову</w:t></w:r></w:p></w:comment></w:comments>',
+        ]);
+        $this->assertStringContainsString('Позвонить Сидорову', $this->process($path)->text, 'примечания — тоже содержимое');
+
+        $withImage = $this->zip('mixed.docx', [
+            'word/document.xml' => '<?xml version="1.0"?><w:document ' . $ns . '><w:body><w:p><w:r><w:t>Есть текст</w:t></w:r></w:p></w:body></w:document>',
+            'word/media/image1.png' => "\x89PNG\r\n\x1a\n" . str_repeat("\0", 32),
+        ]);
+        try {
+            $this->process($withImage);
+            $this->fail('изображение рядом с текстом без OCR — непроверенное содержимое');
+        } catch (FileProcessingException $e) {
+            $this->assertSame('ocr_required_unavailable', $e->errorCode);
+        }
+        $this->assertNoTempLeft();
+    }
+
+    public function testOdtTextNotesAnnotationsAndHeaders(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('ext-zip недоступно.');
+        }
+        $t = 'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"';
+        $path = $this->zip('doc.odt', [
+            'mimetype' => 'application/vnd.oasis.opendocument.text',
+            'content.xml' => '<?xml version="1.0"?><office:document-content ' . $t . '><office:body><office:text>'
+                . '<text:h>Договор</text:h><text:p>Исполнитель<text:s text:c="2"/>Петров<text:note><text:note-body><text:p>сноска: тел. 8 912 000-00-00</text:p></text:note-body></text:note></text:p>'
+                . '<text:p><office:annotation><text:p>уточнить у Козловой</text:p></office:annotation>Срок</text:p>'
+                . '</office:text></office:body></office:document-content>',
+            'styles.xml' => '<?xml version="1.0"?><office:document-styles ' . $t . '><office:master-styles><style:master-page><style:header><text:p>ООО Ромашка</text:p></style:header></style:master-page></office:master-styles></office:document-styles>',
+        ]);
+        $text = $this->process($path)->text;
+        foreach (['Договор', 'Исполнитель  Петров', '8 912 000-00-00', 'уточнить у Козловой', 'ООО Ромашка'] as $part) {
+            $this->assertStringContainsString($part, $text);
+        }
         $this->assertNoTempLeft();
     }
 

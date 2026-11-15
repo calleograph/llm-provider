@@ -147,7 +147,9 @@ function initAnonymizationProfile() {
   }
   function apply() {
     document.querySelectorAll('[data-profile-section]').forEach(function (section) {
-      section.hidden = section.getAttribute('data-profile-section') !== select.value;
+      // Список профилей через пробел; поля скрытого блока выключаются, чтобы required не мешал отправке формы.
+      section.hidden = section.getAttribute('data-profile-section').split(' ').indexOf(select.value) < 0;
+      section.querySelectorAll('input, select, textarea').forEach(function (el) { el.disabled = section.hidden; });
     });
   }
   select.addEventListener('change', apply);
@@ -460,3 +462,18 @@ function initDraftAutosave() {
     }
   });
 }
+
+/* Подтверждение и автоотправка форм без встроенных обработчиков (CSP: script-src 'self'):
+   <form data-confirm="Текст?"> и <input data-autosubmit>. */
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (form instanceof HTMLFormElement && form.hasAttribute('data-confirm') && !window.confirm(form.getAttribute('data-confirm'))) {
+    e.preventDefault();
+  }
+}, true);
+document.addEventListener('change', function (e) {
+  var el = e.target;
+  if (el && el.hasAttribute && el.hasAttribute('data-autosubmit') && el.form) {
+    el.form.requestSubmit ? el.form.requestSubmit() : el.form.submit();
+  }
+});

@@ -11,9 +11,10 @@ use App\Llm\Files\TextExtractor;
 use App\Llm\Files\TextNormalizer;
 
 /**
- * DOCX: текст основного документа, колонтитулов и сносок. Если текстового
- * слоя нет, а внутри только изображения (вставленный скан) — локальный OCR
- * встроенных изображений; без OCR такой документ блокируется.
+ * DOCX: текст основного документа, колонтитулов, сносок и примечаний.
+ * Встроенные изображения (сканы, снимки экрана) — тоже содержимое документа:
+ * они распознаются локальным OCR и добавляются к тексту; без OCR документ
+ * с изображениями блокируется целиком (непроверенное содержимое наружу не уходит).
  */
 final class DocxExtractor implements TextExtractor
 {
@@ -43,7 +44,7 @@ final class DocxExtractor implements TextExtractor
 
             $parts = ['word/document.xml'];
             foreach ($package->names() as $name) {
-                if (preg_match('#\Aword/(header\d*|footer\d*|footnotes|endnotes)\.xml\z#', $name) === 1) {
+                if (preg_match('#\Aword/(header\d*|footer\d*|footnotes|endnotes|comments)\.xml\z#', $name) === 1) {
                     $parts[] = $name;
                 }
             }
@@ -60,20 +61,15 @@ final class DocxExtractor implements TextExtractor
             }
             $text = TextNormalizer::clean(implode("\n\n", $sections));
 
-            if (TextNormalizer::meaningfulLength($text) > 0) {
-                return new ExtractionResult($text);
-            }
-
-            // Текстового слоя нет — возможно, документ состоит из сканов.
             $images = array_values(array_filter(
                 $package->names(),
                 static fn (string $n): bool => preg_match('#\Aword/media/[^/]+\.(png|jpe?g|tiff?|bmp)\z#i', $n) === 1,
             ));
             if ($images === []) {
-                return new ExtractionResult('');
+                return new ExtractionResult($text);
             }
             if ($this->ocr === null || !$this->ocr->isAvailable()) {
-                throw new FileProcessingException('ocr_required_unavailable', 'DOCX без текстового слоя, OCR недоступен.');
+                throw new FileProcessingException('ocr_required_unavailable', 'DOCX содержит изображения, OCR недоступен — содержимое не проверить.');
             }
 
             $ocrTexts = [];
@@ -91,7 +87,7 @@ final class DocxExtractor implements TextExtractor
                 }
             }
 
-            return new ExtractionResult(TextNormalizer::clean(implode("\n\n", $ocrTexts)), true, null, count($ocrTexts));
+            return new ExtractionResult(TextNormalizer::clean(implode("\n\n", array_merge([$text], $ocrTexts))), true, null, count($ocrTexts));
         } finally {
             $package->close();
         }

@@ -1,0 +1,16 @@
+# Только для сквозных проверок: заглушка LLM по HTTPS и доверие php к тестовой CA. В рабочей установке не используется.
+services:
+  llmstub:
+    image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    command: ["python", "/stub/stub.py", "/certs/stub.crt", "/certs/stub.key"]
+    volumes:
+      - ./tests/e2e/llmstub:/stub:ro
+      - ${E2E_CERTS:?}:/certs:ro
+    networks:
+      egress:
+        aliases: [llm.example.com]
+    user: "65534:65534"
+    read_only: true
+  php:
+    volumes:
+      - ${E2E_CERTS:?}/bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro

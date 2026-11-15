@@ -291,6 +291,48 @@ final class ProjectRepository
         return $parts === [] ? null : AnonymizedText::fromStorage(implode("\n\n", $parts));
     }
 
+    /**
+     * Части контекста проекта для ContextBuilder: инструкции (слой 5 иерархии), документы-источники
+     * (данные, отбираются по бюджету), описание и сохранённое состояние проекта. Всё — обезличенное.
+     *
+     * @return array{instructions:string,sources:list<array{title:string,text:string}>,state:string,description:string}|null
+     */
+    public function contextParts(int $projectId, string $ownerKey): ?array
+    {
+        $project = $this->findOwned($projectId, $ownerKey);
+        if ($project === null) {
+            return null;
+        }
+        $this->migrateLegacyInstructions($projectId, $ownerKey);
+        $stmt = $this->pdo->prepare('SELECT title, source_type, content_z FROM llm_project_sources WHERE project_id = :id ORDER BY id');
+        $stmt->execute(['id' => $projectId]);
+        $instructions = [];
+        $sources = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $text = CompactText::unpack(self::blob($row['content_z']));
+            if ($row['source_type'] === self::TYPE_INSTRUCTION) {
+                $instructions[] = '[Инструкция: ' . $row['title'] . "]\n" . $text;
+            } else {
+                $sources[] = ['title' => (string) $row['title'], 'text' => $text];
+            }
+        }
+        $meta = $this->pdo->prepare('SELECT description, state_z FROM llm_projects WHERE id = ?');
+        $meta->execute([$projectId]);
+        $m = $meta->fetch() ?: [];
+
+        return [
+            'instructions' => implode("\n\n", $instructions),
+            'sources' => $sources,
+            'state' => CompactText::unpack(self::blob($m['state_z'] ?? null)),
+            'description' => (string) ($m['description'] ?? ''),
+        ];
+    }
+
+    public function setDescription(int $projectId, string $anonymizedDescription): void
+    {
+        $this->pdo->prepare('UPDATE llm_projects SET description = ?, updated_at = ? WHERE id = ?')->execute([$anonymizedDescription, gmdate('c'), $projectId]);
+    }
+
     private static function blob(mixed $value): ?string
     {
         if (is_resource($value)) {
