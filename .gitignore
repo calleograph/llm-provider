@@ -35,3 +35,11 @@ __pycache__/
 .update.lock
 *.bak.gpg
 .venv/
+
+# Рабочие заметки разработчика: остаются локально, в публичный репозиторий не входят.
+/HISTORY.md
+/PROJECT.md
+/PORTING_PLAN.md
+/PYTHON_PORT_PLAN.md
+/tests/PARITY.md
+/tests/parity/

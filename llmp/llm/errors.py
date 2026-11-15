@@ -1,4 +1,4 @@
-"""Ошибка обращения к LLM и результат запроса (как LlmException/LlmResult PHP-версии).
+"""Ошибка обращения к LLM и результат запроса (как LlmException/LlmResult версии 1.x).
 
 error_code безопасен для журнала: not_found | disabled | access_denied | unsupported_type | secret_unavailable |
 auth_failed | billing | rate_limited | overloaded | server_error | bad_request | context_overflow | unsupported_param |

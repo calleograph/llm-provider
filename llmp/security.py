@@ -155,5 +155,5 @@ def client_ip(remote_addr: str | None, forwarded_for: str | None, trusted_proxie
 
 def is_https(scheme: str, forwarded_proto: str | None) -> bool:
     """Только для флага Secure куки: подделка заголовка по http лишь заставит браузер не вернуть куку — вреда нет,
-    поэтому доверенность прокси здесь не проверяется (как в PHP-версии)."""
+    поэтому доверенность прокси здесь не проверяется (как в версии 1.x)."""
     return scheme == "https" or (forwarded_proto or "").lower() == "https"

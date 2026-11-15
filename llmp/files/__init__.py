@@ -1,4 +1,4 @@
-"""Локальная обработка загруженных файлов (перенос src/Llm/Files PHP-версии)."""
+"""Локальная обработка загруженных файлов (перенос src/Llm/Files версии 1.x)."""
 
 from .base import ExtractedFile, ExtractionResult, FileProcessingException, OcrEngine, ProcessRunner, StagedFile, TextNormalizer
 from .processor import FileProcessor

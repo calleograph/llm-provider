@@ -1,4 +1,4 @@
-"""Внутренний сервис обезличивания (перенесён из «Переговорки», app/privacy без изменений логики).
+"""Внутренний сервис обезличивания (движок — app/privacy).
 
 Сервис без состояния: настройки (словарь, исключения, внутренние домены, свой профиль) присылает PHP-приложение в каждом запросе,
 поэтому БД здесь нет. Доступен только во внутренней сети Compose и только с общим токеном INTERNAL_API_TOKEN.
@@ -45,7 +45,7 @@ _state = {"ready": False, "error": None, "load_ms": None, "requests": 0, "failur
 
 
 class Cfg:
-    """Те же поля, что AnonymizerSettings «Переговорки» (policy.build_policy читает их как атрибуты)."""
+    """Поля настроек, которые policy.build_policy читает как атрибуты."""
 
     def __init__(self, d: dict):
         self.terms = [t for t in (d.get("terms") or []) if isinstance(t, dict) and str(t.get("term", "")).strip()][:5000]

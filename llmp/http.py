@@ -2,7 +2,7 @@
 
 Только https (http — лишь для явно разрешённых внутренних адресов), сертификат проверяется всегда, перенаправления
 не выполняются, ответ ограничен по размеру. Ошибки сети — HttpTransportError с видом: timeout | dns | connect | tls |
-scheme | closed | too_large | other (как у PHP-версии: по виду строится политика резервирования)."""
+scheme | closed | too_large | other (как у версии 1.x: по виду строится политика резервирования)."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ class HttpxTransport:
             raise HttpTransportError("scheme", "Разрешены только https:// адреса.")
         if scheme == "http":
             return self._exchange(contextlib.nullcontext(_internal_client()), request)
-        # Без корпоративного CA — системное хранилище сертификатов (как curl в PHP-версии, учитывает SSL_CERT_FILE),
+        # Без корпоративного CA — системное хранилище сертификатов (как curl в версии 1.x, учитывает SSL_CERT_FILE),
         # а не встроенный набор certifi: CA, добавленный администратором в систему, работает.
         try:
             verify = ssl.create_default_context(cafile=request.ca_bundle_path)

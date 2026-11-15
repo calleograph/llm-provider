@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# updater.sh — помощник обслуживания на хосте для действий из веб-админки (приёмы scripts/updater.sh ArkLock).
+# updater.sh — помощник обслуживания на хосте для действий из веб-админки.
 #
 #   sudo scripts/updater.sh install     установить службу systemd llmprov-updater-<проект>
 #   sudo scripts/updater.sh uninstall

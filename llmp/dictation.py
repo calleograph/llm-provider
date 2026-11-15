@@ -1,5 +1,5 @@
 """Голосовой ввод: одноразовый билет для WebSocket-шлюза диктовки в контейнере ASR. Формат
-`base64url(json).base64url(HMAC-SHA256)` совпадает с services/asr/app/ws_gateway.py::verify_ticket и PHP-версией.
+`base64url(json).base64url(HMAC-SHA256)` совпадает с services/asr/app/ws_gateway.py::verify_ticket и версией 1.x.
 В билете — ключ пользователя (для лимита диктовок в час), срок 60 с, одноразовый номер и настройки диктовки;
 шлюз проверяет подпись, срок и одноразовость."""
 

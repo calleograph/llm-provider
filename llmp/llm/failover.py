@@ -1,5 +1,5 @@
-"""Что делать после неудачной попытки (по образцу Hermes Agent: error_classifier, compute_error_backoff, fallback_cooldown,
-empty_response_guard), как FailoverPolicy PHP-версии:
+"""Что делать после неудачной попытки (error_classifier, compute_error_backoff, fallback_cooldown,
+empty_response_guard), как в версии 1.x:
 
   retry — повторить ту же модель (ограниченно, с экспоненциальной задержкой и учётом Retry-After);
   fallback — перейти к следующей модели цепочки;

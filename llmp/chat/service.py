@@ -390,7 +390,7 @@ class ChatService:
         self.projects.set_description(project_id, anon)
         return anon
 
-    MEMORY_MAX_CHARS = 4000   # память проекта — короткие факты и решения (у Hermes MEMORY.md — 2 200 знаков)
+    MEMORY_MAX_CHARS = 4000   # память проекта — короткие факты и решения
 
     def set_project_memory(self, user: ChatUser, ip: str, project_id: int, memory: str) -> str:
         """Правка памяти проекта пользователем: текст уходит в модель — обезличивается; пустой — очистить."""

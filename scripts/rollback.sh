@@ -8,7 +8,7 @@ source "$(dirname "$0")/lib/common.sh"
 sanitize_project_env; load_env "$ENV_FILE"; validate_project_name
 target="${1:-$(grep '"result":"ok"' "$DATA_ROOT/updater/history.jsonl" 2>/dev/null | tail -1 | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("from",""))')}"
 [ -n "$target" ] || die "Нет сведений о прежней версии (history.jsonl) — укажите коммит"
-# образ приложения: app (2.x) или php (1.x — откат с Python-версии на PHP-версию)
+# образ приложения: app (2.x) или php (1.x — откат с Python-версии на версию 1.x)
 docker image inspect "${COMPOSE_PROJECT_NAME}-app:$target" >/dev/null 2>&1 || docker image inspect "${COMPOSE_PROJECT_NAME}-php:$target" >/dev/null 2>&1 || die "Образов версии $target нет — откат без пересборки невозможен"
 [ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ] || die "В коде есть локальные правки — откат остановлен"
 # ветка остаётся веткой (канал обновлений не меняется), иначе — отсоединённый HEAD

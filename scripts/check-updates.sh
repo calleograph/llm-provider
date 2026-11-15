@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-updates.sh — есть ли обновление (перенос scripts/check-updates.sh «Переговорки»). Только git fetch: код, .env, образы и службы не меняются.
+# check-updates.sh — есть ли обновление. Только git fetch: код, .env, образы и службы не меняются.
 #
 #   scripts/check-updates.sh [--ref ТЕГ|ВЕТКА]
 #

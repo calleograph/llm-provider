@@ -1,4 +1,4 @@
-"""Совместимость с данными PHP-версии: значения в data/php_formats.json созданы PHP-кодом (SecretBox, CompactText,
+"""Совместимость с данными версии 1.x: значения в data/php_formats.json созданы PHP-кодом (SecretBox, CompactText,
 password_hash) — новый код обязан их читать, иначе после обновления пропадут ключи провайдеров, история и пароль."""
 
 from __future__ import annotations

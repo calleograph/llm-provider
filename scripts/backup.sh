@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# backup.sh — зашифрованная резервная копия (приёмы scripts/backup.sh ArkLock, для SQLite).
+# backup.sh — зашифрованная резервная копия (для SQLite).
 #
 #   scripts/backup.sh [--keep N]            создать копию и сразу проверить её
 #   scripts/backup.sh --verify FILE         сумма SHA-256, расшифровка, состав, целостность БД
@@ -103,7 +103,7 @@ tar -C "$tmp" -cf - . | gpg --batch --quiet --symmetric --cipher-algo AES256 --s
 mv "$DIR/$name.part" "$DIR/$name"
 printf '{"sha256":"%s","created":"%s","version":"%s"}\n' "$(sha256sum "$DIR/$name" | cut -d' ' -f1)" "$(date -u +%FT%TZ)" "$(app_version)" > "$DIR/$name.json"
 ok "Копия создана: $DIR/$name ($(du -h "$DIR/$name" | cut -f1))"
-# Проверка сразу после создания: непроверенная копия — не копия (ArkLock). Неудача — копия удаляется.
+# Проверка сразу после создания: непроверенная копия — не копия. Неудача — копия удаляется.
 if ! verify "$DIR/$name"; then rm -f "$DIR/$name" "$DIR/$name.json"; die "Созданная копия не прошла проверку и удалена"; fi
 # ротация: последние KEEP копий; цифра после имени — копии проекта «llm-test» не совпадут с «llm»
 ls -1t "$DIR"/"${COMPOSE_PROJECT_NAME}"-[0-9]*.bak.gpg 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old" "$old.json"; info "Удалена старая копия $(basename "$old")"; done

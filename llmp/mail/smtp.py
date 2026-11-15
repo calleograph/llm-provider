@@ -1,4 +1,4 @@
-"""SMTP-клиент с поэтапной диагностикой (алгоритм ArkLock apps/api/src/mail/smtp.ts, как у PHP-версии):
+"""SMTP-клиент с поэтапной диагностикой:
 dns → tcp → greeting → ehlo → tls → certificate → methods → auth → sender → recipient → data.
 Каждый этап записывается {stage, ok, info, code}; тайм-аут относится к этапу, на котором случился.
 
@@ -219,7 +219,7 @@ class SmtpClient:
 
     @staticmethod
     def classify(stage: str, status: int, text: str) -> str:
-        """Классификация ответа (classifyReply ArkLock)."""
+        """Классификация ответа."""
         t = text.lower()
         if status in (421, 450, 451, 454, 455):
             if re.search(r"too many|rate|limit|throttl|exceed|quota", t):

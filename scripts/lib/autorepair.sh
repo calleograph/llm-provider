@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Автопочинка и выбор цели обновления по git (перенос scripts/lib/autorepair.sh и upd_* из updatelib.sh «Переговорки»).
+# Автопочинка и выбор цели обновления по git.
 # Подключается из check-updates.sh и update.sh после common.sh (нужны REPO_ROOT, log/ok/warn/info, DATA_ROOT — для сохранения правок).
 # Правило: ничего не удаляется безвозвратно. Локальные правки и коммиты СНАЧАЛА сохраняются в ${BACKUP_DIR:-$DATA_ROOT/backups}/local-changes-*/
 # (и в git), и только потом рабочая копия приводится к целевой версии. Никаких reset --hard; неотслеживаемые файлы (свой compose-override,

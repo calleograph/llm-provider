@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# update.sh — штатное обновление с GitHub (способ update.sh «Переговорки» + проверенный поток 1.x/2.0).
+# update.sh — штатное обновление с GitHub.
 #
 #   scripts/check-updates.sh     # есть ли обновление (только git fetch, ничего не меняет)
 #   scripts/update.sh [--dry-run] [--yes] [--force] [--ref ТЕГ|ВЕТКА] [--recover]

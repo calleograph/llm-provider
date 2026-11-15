@@ -1,4 +1,4 @@
-"""Схема SQLite — та же, что у PHP-версии (src/Config/Database.php, src/Llm/LlmSchema.php, MailQueue):
+"""Схема SQLite — та же, что у версии 1.x (src/Config/Database.php, src/Llm/LlmSchema.php, MailQueue):
 существующие установки открываются без конвертации. Шаги идут в прежнем порядке; колонки, появившиеся позже,
 добавляются только если их нет (проверка по PRAGMA table_info — чтение, без блокировки записи).
 web_sessions — новое: серверные сессии вместо файлов PHP."""

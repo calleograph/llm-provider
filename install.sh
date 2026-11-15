@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — установка LLM-провайдера (Docker Compose). Профили и приёмы перенесены из «Переговорки» и ArkLock.
+# install.sh — установка LLM-провайдера (Docker Compose).
 #
 #   ./install.sh [--profile standalone|shared-host] [--data-root DIR] [--project NAME] [--port N] [--bind ADDR]
 #                [--public-url https://chat.example.com] [--publish port|nginx] [--server-name NAME]
@@ -62,7 +62,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ------------------------------------------------------------------ профиль
-detect_profile() { # чужие compose-проекты или веб-сервер на хосте → shared-host (ArkLock)
+detect_profile() { # чужие compose-проекты или веб-сервер на хосте → shared-host
   local others=""
   command -v docker >/dev/null 2>&1 && others="$(docker ps --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null | grep -v "^${COMPOSE_PROJECT_NAME:-llmprov}$" | grep -c . || true)"
   if [ "${others:-0}" -gt 0 ] || systemctl is-active --quiet nginx 2>/dev/null || systemctl is-active --quiet apache2 2>/dev/null; then echo shared-host; else echo standalone; fi
@@ -171,7 +171,7 @@ stage_config() {
   if [ -f var/data/master.key ] && ! grep -qE '^APP_MASTER_KEY=.+' "$ENV_FILE"; then set_default APP_MASTER_KEY "$(tr -d '\n' < var/data/master.key)"; info "Мастер-ключ перенесён из var/data/master.key"; fi
   set_default APP_MASTER_KEY "$(openssl rand -base64 32)"
   set_default INTERNAL_API_TOKEN "$(rand_hex 32)"; set_default DICTATION_SECRET "$(rand_hex 32)"; set_default REDIS_PASSWORD "$(rand_hex 24)"
-  if [ "$PROFILE" = shared-host ]; then   # на общем сервере ASR не забирает все ядра (как setup.sh «Переговорки»)
+  if [ "$PROFILE" = shared-host ]; then   # на общем сервере ASR не забирает все ядра
     local half=$(( $(nproc) / 2 )); [ "$half" -ge 1 ] || half=1; grep -qE '^ASR_CPU_THREADS=[1-9]' "$ENV_FILE" || set_value ASR_CPU_THREADS "$half"
   fi
   size_resources
