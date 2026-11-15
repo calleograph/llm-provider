@@ -1,0 +1,247 @@
+{# Раздел «Подключения LLM API» (HTML-часть llm_providers.php) #}
+{% macro provider_fields(row) %}
+{% set card_id = row.id if row is not none else 0 %}
+{% set errors = field_errors if form_provider_id == card_id else {} %}
+{% set sfx = row.id|string if row is not none else 'new' %}
+{% set current_type = val(row, 'provider_type', 'openai_compatible') %}
+{% set defaults = type_defaults[current_type] if current_type in type_defaults else (type_defaults.values()|first) %}
+{% macro err(key) %}{% if key in errors %}<p class="field-error">{{ errors[key] }}</p>{% endif %}{% endmacro %}
+{% macro cls(key) %}{% if key in errors %} has-error{% endif %}{% endmacro %}
+  <div class="form-row" data-provider-form>
+    <div class="field">
+      <label class="field-label" for="name-{{ sfx }}">Отображаемое название</label>
+      <input class="text-input{{ cls('name') }}" id="name-{{ sfx }}" name="name" required maxlength="100" value="{{ val(row, 'name') }}" placeholder="GPT-4o через polza.ai">
+      {{ err('name') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="provider_type-{{ sfx }}">Тип провайдера</label>
+      <select class="text-input{{ cls('provider_type') }}" id="provider_type-{{ sfx }}" name="provider_type" data-provider-type
+              data-defaults="{{ defaults_json }}">
+{% for type, info in type_defaults.items() %}
+        <option value="{{ type }}" {{ 'selected' if current_type == type else '' }}>{{ info.label }}</option>
+{% endfor %}
+      </select>
+      {{ err('provider_type') }}
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="base_url-{{ sfx }}">Base URL</label>
+      <input class="text-input{{ cls('base_url') }}" id="base_url-{{ sfx }}" name="base_url" required data-default-field="base_url"
+             value="{{ val(row, 'base_url', defaults.base_url if row is none else '') }}" placeholder="{{ defaults.base_url }}">
+      {{ err('base_url') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="endpoint-{{ sfx }}">API endpoint</label>
+      <input class="text-input{{ cls('endpoint') }}" id="endpoint-{{ sfx }}" name="endpoint" required data-default-field="endpoint"
+             value="{{ val(row, 'endpoint', defaults.endpoint if row is none else '') }}" placeholder="{{ defaults.endpoint }}">
+      {{ err('endpoint') }}
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="api_key-{{ sfx }}">API key</label>
+      <div class="password-field-wrap">
+        <input class="text-input{{ cls('api_key') }}" type="password" id="api_key-{{ sfx }}" name="api_key" autocomplete="new-password"
+               placeholder="{% if row is not none and row.has_api_key %}сохранён ({{ row.api_key_hint or '' }}) — оставьте пустым, чтобы не менять{% else %}ключ хранится только на сервере в зашифрованном виде{% endif %}">
+        <button type="button" class="toggle-password" data-target="api_key-{{ sfx }}">Показать</button>
+      </div>
+      {{ err('api_key') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="model-{{ sfx }}">Название модели (ID)</label>
+      <input class="text-input mono{{ cls('model') }}" id="model-{{ sfx }}" name="model" required data-default-placeholder="model_placeholder"
+             value="{{ val(row, 'model') }}" placeholder="{{ defaults.model_placeholder }}">
+      {{ err('model') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="api_version-{{ sfx }}">Версия API (при необходимости)</label>
+      <input class="text-input{{ cls('api_version') }}" id="api_version-{{ sfx }}" name="api_version" data-default-field="api_version"
+             value="{{ val(row, 'api_version', defaults.api_version if row is none else '') }}" placeholder="{{ defaults.api_version if defaults.api_version != '' else 'не требуется' }}">
+      {{ err('api_version') }}
+    </div>
+  </div>
+  <div class="form-row" data-routing-provider-row{{ '' if current_type == 'openai_compatible' else ' hidden' }}>
+    <div class="field">
+      <label class="field-label" for="routing_provider-{{ sfx }}">Провайдер маршрута (необязательно)</label>
+      <input class="text-input{{ cls('routing_provider') }}" id="routing_provider-{{ sfx }}" name="routing_provider" maxlength="80"
+             value="{{ val(row, 'routing_provider') }}" placeholder="например DeepInfra">
+      {{ err('routing_provider') }}
+      <p class="muted llm-note">Жёстко фиксирует маршрут у мультипровайдерных шлюзов (например polza.ai) — подставляется как provider.only в запрос. Несовместимо с сортировкой по цене ниже. Оставьте пустым, чтобы шлюз выбирал маршрут сам.</p>
+    </div>
+    <div class="field">
+      <label class="switch"><input type="checkbox" name="sort_by_price" value="1" id="sort_by_price-{{ sfx }}"{{ ' checked' if val(row, 'sort_by_price', '') == '1' else '' }}><span class="track"></span> Выбирать самый дешёвый маршрут (provider.sort=price)</label>
+      {{ err('sort_by_price') }}
+      <label class="field-label" for="max_price_per_mtoken-{{ sfx }}">Потолок цены, ₽ за млн токенов (необязательно)</label>
+      <input class="text-input{{ cls('max_price_per_mtoken') }}" id="max_price_per_mtoken-{{ sfx }}" name="max_price_per_mtoken" inputmode="decimal"
+             value="{{ val(row, 'max_price_per_mtoken') }}" placeholder="без ограничения">
+      {{ err('max_price_per_mtoken') }}
+      <p class="muted llm-note">Действует только вместе с сортировкой по цене — отсекает маршруты дороже указанной цены (provider.max_price, одно и то же значение для prompt и completion). Слишком низкое значение может не пропустить ни одного маршрута — см. галочку ниже.</p>
+      <label class="switch"><input type="checkbox" name="allow_fallbacks" value="1" id="allow_fallbacks-{{ sfx }}"{{ ' checked' if val(row, 'allow_fallbacks', '1') == '1' else '' }}><span class="track"></span> Если по потолку цены не осталось ни одного маршрута — не отклонять запрос, а взять любой доступный (provider.allow_fallbacks)</label>
+      {{ err('allow_fallbacks') }}
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="connect_timeout-{{ sfx }}">Таймаут соединения (сек.)</label>
+      <input class="text-input{{ cls('connect_timeout') }}" type="number" min="1" max="60" id="connect_timeout-{{ sfx }}" name="connect_timeout" value="{{ val(row, 'connect_timeout', '10') }}">
+      {{ err('connect_timeout') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="response_timeout-{{ sfx }}">Таймаут ответа (сек.)</label>
+      <input class="text-input{{ cls('response_timeout') }}" type="number" min="5" max="900" id="response_timeout-{{ sfx }}" name="response_timeout" value="{{ val(row, 'response_timeout', '120') }}">
+      {{ err('response_timeout') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="max_tokens-{{ sfx }}">Максимум токенов ответа</label>
+      <input class="text-input{{ cls('max_tokens') }}" type="number" min="1" max="200000" id="max_tokens-{{ sfx }}" name="max_tokens" value="{{ val(row, 'max_tokens', '2048') }}">
+      {{ err('max_tokens') }}
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="extra_headers-{{ sfx }}">Дополнительные HTTP-заголовки (необязательно, «Имя: значение» по строкам)</label>
+      <textarea class="text-input mono{{ cls('extra_headers') }}" rows="2" id="extra_headers-{{ sfx }}" name="extra_headers" autocomplete="off"
+                placeholder="{% if row is not none and row.extra_header_names %}сохранены: {{ row.extra_header_names }} — введите заново, чтобы заменить{% else %}X-Organization: corp{% endif %}"></textarea>
+{% if row is not none and row.extra_header_names %}
+      <label class="llm-inline-check"><input type="checkbox" name="clear_extra_headers" value="1"> удалить сохранённые заголовки</label>
+{% endif %}
+      {{ err('extra_headers') }}
+    </div>
+  </div>
+  <div class="llm-switch-row">
+    <label class="switch"><input type="checkbox" name="is_enabled" value="1" {{ 'checked' if val(row, 'is_enabled', '1') == '1' else '' }}><span class="track"></span> Включена</label>
+    <label class="switch"><input type="checkbox" name="use_corporate_ca" value="1" {{ 'checked' if val(row, 'use_corporate_ca', '') == '1' else '' }}><span class="track"></span> Проверять TLS по корпоративному CA bundle (для внутренних шлюзов)</label>
+  </div>
+{% endmacro %}
+<p class="muted llm-lead">
+  Подключения к внешним LLM API. Все обращения идут через единый LLM Gateway; пользовательский текст
+  попадает туда только после обезличивания. API-ключ хранится на сервере в зашифрованном виде
+  (тот же master key, что для остальных секретов) и после сохранения не отображается.
+</p>
+
+<div class="llm-toolbar">
+  <p class="section-title">Подключённые нейросети</p>
+  <button type="button" class="btn btn-primary llm-plus" data-reveal="newProviderCard"{{ ' hidden' if form_provider_id == 0 else '' }}>+ Добавить нейросеть</button>
+</div>
+
+<div class="llm-card" id="newProviderCard"{{ '' if form_provider_id == 0 else ' hidden' }}>
+  <div class="llm-card-head"><h2>Новая нейросеть</h2></div>
+  <form method="post" action="index.php?section=llm_providers&action=create_provider">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {{ provider_fields(none) }}
+    <div class="llm-actions"><button class="btn btn-primary" type="submit">Добавить</button></div>
+  </form>
+</div>
+
+{% if not rows %}
+<p class="muted">Нейросети ещё не добавлены — нажмите «+ Добавить нейросеть».</p>
+{% endif %}
+
+{% for row in rows %}
+{% set pid = row.id|int %}
+<div class="llm-card" id="provider-{{ pid }}">
+  <div class="llm-card-head">
+    <h2>{{ row.name }} <span class="muted mono">{{ row.model }}</span></h2>
+    <div>
+      <span class="badge badge-inactive">{{ type_defaults[row.provider_type].label if row.provider_type in type_defaults else row.provider_type }}</span>
+      <span class="badge {{ 'badge-active' if row.is_enabled else 'badge-inactive' }}">{{ 'Включена' if row.is_enabled else 'Отключена' }}</span>
+{% if row.is_default %}
+      <span class="badge badge-active" title="Открывается в чате первой, если доступна пользователю">По умолчанию</span>
+{% endif %}
+{% if row.last_check_at is not none %}
+      <span class="badge {{ 'badge-active' if row.last_check_ok|int == 1 else 'llm-badge-bad' }}" title="{{ row.last_check_message or '' }}">
+        Проверка {{ row.last_check_at[:16] }}: {{ 'OK' if row.last_check_ok|int == 1 else 'ошибка' }}
+      </span>
+{% endif %}
+    </div>
+  </div>
+  <form method="post" action="index.php?section=llm_providers&action=update_provider#provider-{{ pid }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ pid }}">
+    {{ provider_fields(row) }}
+    <div class="llm-actions">
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+      <button class="btn" type="submit" form="testProvider{{ pid }}">Проверить подключение</button>
+      <button class="btn" type="submit" form="toggleProvider{{ pid }}">{{ 'Отключить' if row.is_enabled else 'Включить' }}</button>
+      <button class="btn" type="submit" form="defaultProvider{{ pid }}">{{ 'Снять «по умолчанию»' if row.is_default else 'Сделать по умолчанию' }}</button>
+      <button class="btn btn-danger" type="submit" form="deleteProvider{{ pid }}">Удалить</button>
+    </div>
+  </form>
+  <form id="testProvider{{ pid }}" method="post" action="index.php?section=llm_providers&action=test_provider#provider-{{ pid }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ pid }}">
+  </form>
+  <form id="toggleProvider{{ pid }}" method="post" action="index.php?section=llm_providers&action=toggle_provider#provider-{{ pid }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ pid }}">
+  </form>
+  <form id="defaultProvider{{ pid }}" method="post" action="index.php?section=llm_providers&action=set_default_provider#provider-{{ pid }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ pid }}">
+  </form>
+  <form id="deleteProvider{{ pid }}" method="post" action="index.php?section=llm_providers&action=delete_provider"
+        data-confirm-title="Удалить нейросеть?"
+        data-confirm-text="Подключение «{{ row.name }}» и все назначенные на него права будут удалены. Сохранённые диалоги останутся.">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ pid }}">
+  </form>
+{% if pid in test_results %}
+{% set r = test_results[pid] %}
+  <div class="alert {{ 'alert-success' if r.ok else 'alert-error' }} llm-result">
+    {{ r.message }} ({{ r.duration_ms|int }} мс)
+  </div>
+  <p class="muted llm-note">Для проверки отправляется синтетическая фраза без пользовательских данных.</p>
+{% endif %}
+</div>
+{% endfor %}
+
+<hr class="sep">
+
+<p class="section-title">Общие параметры чата</p>
+<form method="post" action="index.php?section=llm_providers&action=save_chat_settings">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="system_prompt">Системная инструкция для всех нейросетей (не содержит пользовательских данных){{ setting_code('CHAT_SYSTEM_PROMPT') }}</label>
+      <textarea class="text-input" id="system_prompt" name="system_prompt" rows="3" maxlength="8000">{{ chat.get('system_prompt') }}</textarea>
+      <p class="muted llm-note">Слой 3 из 6: базовые правила, правила достоверности и безопасности встроены и важнее; инструкции модели, проекта и диалога идут после.</p>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="style_default">Стиль ответа по умолчанию</label>
+      <select class="text-input" id="style_default" name="style_default">
+{% for key, style in styles.items() %}
+        <option value="{{ key }}" {{ 'selected' if chat.get('style_default') == key else '' }}>{{ style[0] }}</option>
+{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="summary_model_id">Модель для сводок длинных диалогов</label>
+      <select class="text-input" id="summary_model_id" name="summary_model_id">
+        <option value="0">та же, что отвечает</option>
+{% for m in models %}
+        <option value="{{ m.id }}" {{ 'selected' if chat.get('summary_model_id')|int == m.id else '' }}>{{ m.display_name ~ ' · ' ~ m.provider_name }}</option>
+{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <span class="field-label">Стили, доступные сотрудникам</span>
+      <div class="llm-check-list">
+{% for key, style in styles.items() %}
+        <label class="llm-inline-check"><input type="checkbox" name="styles_allowed[]" value="{{ key }}" {{ 'checked' if key in allowed_styles else '' }}> {{ style[0] }}</label>
+{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="history_max_chars">Потолок истории в контексте (символов) — дополнительно к окну модели{{ setting_code('CHAT_HISTORY_MAX_CHARS') }}</label>
+      <input class="text-input" type="number" id="history_max_chars" name="history_max_chars" value="{{ chat.get('history_max_chars') }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="max_message_chars">Максимальная длина сообщения (символов){{ setting_code('CHAT_MAX_MESSAGE_CHARS') }}</label>
+      <input class="text-input" type="number" id="max_message_chars" name="max_message_chars" value="{{ chat.get('max_message_chars') }}">
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit">Сохранить параметры</button>
+</form>

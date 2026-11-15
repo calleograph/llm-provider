@@ -1,0 +1,11 @@
+# Веб-приложение (llmp): точные версии — воспроизводимая сборка образа и venv профиля без контейнеров.
+fastapi==0.121.2
+uvicorn==0.38.0
+jinja2==3.1.6
+python-multipart==0.0.20
+httpx==0.28.1
+cryptography==46.0.3
+argon2-cffi==25.1.0
+bcrypt==5.0.0
+ldap3==2.9.1
+defusedxml==0.7.1

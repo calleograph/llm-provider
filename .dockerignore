@@ -9,3 +9,7 @@ models
 **/.pytest_cache
 .phpunit.result.cache
 services/asr/tests
+.backup.key
+.update.lock
+*.bak.gpg
+.venv

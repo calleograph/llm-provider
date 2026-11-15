@@ -1,0 +1,8 @@
+<details class="theme-picker" data-theme-picker>
+  <summary class="theme-picker-btn" title="Тема оформления"><span class="theme-dot" data-theme-dot aria-hidden="true"></span><span class="theme-picker-label"><span class="visually-hidden">Тема: </span><span data-theme-label>Стекло</span></span><svg class="theme-picker-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+  <div class="theme-picker-panel" role="group" aria-label="Тема оформления">
+{% for id, label, hint in themes %}
+    <button type="button" class="theme-opt" data-theme-btn="{{ id }}" aria-pressed="false"><span class="theme-dot" data-swatch="{{ id }}" aria-hidden="true"></span><span class="theme-opt-text"><span class="theme-opt-label">{{ label }}</span><small>{{ hint }}</small></span></button>
+{% endfor %}
+  </div>
+</details>

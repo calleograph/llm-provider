@@ -21,7 +21,7 @@ x-hardening: &hardening
 networks:
   internal:
     internal: true          # без выхода наружу
-  egress: {}                # выход к LLM API, LDAP, SMTP — только у php
+  egress: {}                # выход к LLM API, LDAP, SMTP — только у app
 
 services:
   nginx:
@@ -38,16 +38,16 @@ services:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:?APP_PORT не задан}:8080"
     networks: [internal, egress]
     depends_on:
-      php: { condition: service_healthy }
+      app: { condition: service_healthy }
     mem_limit: ${NGINX_MEM_LIMIT:-256m}
 
-  php:
+  app:
     <<: *hardening
     build:
       context: .
-      dockerfile: docker/php/Dockerfile
+      dockerfile: docker/app/Dockerfile
       args: { APP_VERSION: "${APP_VERSION:-0.0.0}", APP_GIT_COMMIT: "${APP_GIT_COMMIT:-unknown}" }
-    image: ${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME}-app:${IMAGE_TAG:-local}
     read_only: true
     tmpfs: ["/tmp:uid=33,gid=33,mode=0700"]
     environment:
@@ -59,22 +59,24 @@ services:
       ASR_URL: http://asr:8090
       ASR_ENABLED: ${ASR_ENABLED:-1}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
-      PHP_FPM_MAX_CHILDREN: ${PHP_FPM_MAX_CHILDREN:-16}
+      APP_WORKERS: ${APP_WORKERS:-4}
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
     volumes:
       - ${DATA_ROOT:?DATA_ROOT не задан}/app:/data/app
-      - ${DATA_ROOT}/updater:/data/updater
+      # состояние помощника — только чтение; запросы — отдельный каталог inbox (помощник пишет в свой каталог, не в доступный приложению)
+      - ${DATA_ROOT}/updater:/data/updater:ro
+      - ${DATA_ROOT}/updater/inbox:/data/updater/inbox
     networks: [internal, egress]
     depends_on:
       anonymizer: { condition: service_started }
-    mem_limit: ${PHP_MEM_LIMIT:-2g}
+    mem_limit: ${APP_MEM_LIMIT:-2g}
     stop_grace_period: 30s
 
-  # Фоновые задачи (очередь писем, ротация журналов): тот же образ, что php, без портов.
+  # Фоновые задачи (очередь писем, ротация журналов, старые сессии): тот же образ, что app, без портов.
   scheduler:
     <<: *hardening
-    image: ${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG:-local}
-    command: ["php", "/srv/app/bin/scheduler.php"]
+    image: ${COMPOSE_PROJECT_NAME}-app:${IMAGE_TAG:-local}
+    command: ["python", "-m", "llmp.scheduler"]
     read_only: true
     tmpfs: ["/tmp:uid=33,gid=33,mode=0700"]
     environment:
@@ -84,9 +86,9 @@ services:
       - ${DATA_ROOT}/app:/data/app
     networks: [internal, egress]
     depends_on:
-      php: { condition: service_healthy }
+      app: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "php", "-r", "exit(time() - (int) @file_get_contents('/data/app/data/scheduler.heartbeat') < 180 ? 0 : 1);"]
+      test: ["CMD", "python", "-c", "import sys,time; sys.exit(0 if time.time() - int(open('/data/app/data/scheduler.heartbeat').read() or 0) < 180 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -106,6 +108,7 @@ services:
       APP_VERSION: ${APP_VERSION:-0.0.0}
     networks: [internal]
     mem_limit: ${ANON_MEM_LIMIT:-1536m}
+    oom_score_adj: 300   # при нехватке памяти на сервере ядро завершает сначала наши тяжёлые службы, а не чужие процессы
     stop_grace_period: 20s
 
   redis:
@@ -114,7 +117,8 @@ services:
     image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     user: "999:999"
     read_only: true
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "no", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    # пароль — через stdin, а не аргументом: аргументы процессов контейнера видны на хосте в ps
+    command: ["sh", "-c", "printf 'requirepass %s\\n' \"$$REDISCLI_AUTH\" | exec redis-server - --appendonly no --save '' --maxmemory 256mb --maxmemory-policy volatile-lru"]
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:?}
     networks: [internal]
@@ -167,5 +171,6 @@ services:
       retries: 5
       start_period: 120s
     mem_limit: ${ASR_MEM_LIMIT:-4g}
+    oom_score_adj: 500   # ASR — первым при нехватке памяти (перезапустится сам), соседние службы сервера не страдают
     cpu_shares: 512
     stop_grace_period: 20s

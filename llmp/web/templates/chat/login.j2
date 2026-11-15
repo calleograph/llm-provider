@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru" data-site-theme="{{ site_theme() }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Вход — корпоративный AI-чат</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="stylesheet" href="{{ asset('assets/css/app.css') }}">
+<script src="{{ asset('assets/js/theme.js') }}"></script>
+</head>
+<body>
+<div class="pwd-page admin-login-page">
+  <div class="admin-login-shell">
+    <div class="admin-login-intro">
+      <span class="admin-login-brand">{% include "brand_mark.j2" %}Корпоративный AI-чат</span>
+      <p>Работайте с внешними нейросетями, не отдавая им персональные данные.</p>
+      <figure class="auth-specimen">
+        <div class="auth-specimen-row">
+          <span class="auth-specimen-label">Вы пишете</span>
+          <p class="auth-specimen-text">Подготовь ответ <span class="auth-specimen-pii">Анне Соколовой</span>, тел. <span class="auth-specimen-pii">+7 912 345-67-89</span>, почта <span class="auth-specimen-pii">a.sokolova@example.com</span></p>
+        </div>
+        <div class="auth-specimen-row">
+          <span class="auth-specimen-label">Видит нейросеть</span>
+          <p class="auth-specimen-text">Подготовь ответ <span class="gpt-mask">Анна С.</span>, тел. <span class="gpt-mask">[телефон 1]</span>, почта <span class="gpt-mask">[почта 1]</span></p>
+        </div>
+        <figcaption>Замена происходит на сервере компании до отправки. В истории хранится только обезличенный текст.</figcaption>
+      </figure>
+    </div>
+    <div class="card pwd-card admin-login-card">
+      <div class="admin-login-heading">
+        <h1>Вход в чат</h1>
+        <p class="lead">Используйте логин и пароль Windows. Доступ определяется членством в доменных группах.</p>
+      </div>
+
+{% if error_message is not none %}
+      <div class="alert alert-error" role="alert">{{ error_message }}</div>
+{% endif %}
+
+{% if not domains %}
+      <div class="alert alert-warn">Вход в сервис ещё не настроен администратором.</div>
+{% else %}
+      <form method="post" action="index.php?action=login" autocomplete="on">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+{% if domains|length > 1 %}
+        <div class="pwd-field">
+          <label class="field-label" for="domain_id">Домен</label>
+          <select class="text-input" id="domain_id" name="domain_id">
+{% for domain in domains %}
+            <option value="{{ domain.id }}" {{ 'selected' if domain.id == selected_domain_id else '' }}>{{ domain.name ~ ' (' ~ domain.fqdn ~ ')' }}</option>
+{% endfor %}
+          </select>
+        </div>
+{% else %}
+        <input type="hidden" name="domain_id" value="{{ domains[0].id }}">
+{% endif %}
+        <div class="pwd-field">
+          <label class="field-label" for="username">Логин</label>
+          <input class="text-input" type="text" id="username" name="username" required autofocus autocomplete="username"
+                 value="{{ prefill_login }}" placeholder="ivanov или DOMAIN\ivanov">
+        </div>
+        <div class="pwd-field">
+          <label class="field-label" for="password">Пароль</label>
+          <div class="password-field-wrap">
+            <input class="text-input" type="password" id="password" name="password" required autocomplete="current-password">
+            <button type="button" class="toggle-password" data-target="password">Показать</button>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Войти</button>
+      </form>
+{% endif %}
+    </div>
+  </div>
+</div>
+<script src="{{ asset('assets/js/app.js') }}"></script>
+</body>
+</html>

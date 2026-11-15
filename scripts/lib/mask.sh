@@ -41,8 +41,6 @@ mask_stream() {
     -e 's/(bearer[[:space:]]+)[A-Za-z0-9._~+\/=-]{8,}/\1***/Ig'
 }
 
-# mask_text "строка" → маскированная строка
-mask_text() { printf '%s\n' "$1" | mask_stream; }
 
 # env_secret_values FILE → значения секретных переменных (≥ 6 символов) по одному в строке; нужно для финальной проверки bundle
 env_secret_values() {

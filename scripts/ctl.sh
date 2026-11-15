@@ -59,33 +59,15 @@ case "$cmd" in
     while IFS='|' read -r s st h _; do
       if [ "$st" = running ] && { [ "$h" = healthy ] || [ -z "$h" ]; }; then ok "$s: работает${h:+ ($h)}"; else fail "$s: $st ${h:-}"; rc=1; fi
     done < <(svc_table)
-    dc exec -T php php -r '
-      require "vendor_autoload.php";
-      $p = App\Config\Database::connect(App\Config\Paths::database());
-      $ok = $p->query("PRAGMA quick_check")->fetchColumn() === "ok";
-      echo ($ok ? "[ok] БД: целостность в порядке" : "[FAIL] БД: quick_check не пройден"), "\n";
-      $get = static function (string $u): int { $c = curl_init($u); curl_setopt_array($c, [CURLOPT_RETURNTRANSFER => 1, CURLOPT_TIMEOUT => 5]); curl_exec($c); return (int) curl_getinfo($c, CURLINFO_RESPONSE_CODE); };
-      // модели загружаются после старта контейнера (healthy = процесс жив): ждём готовности до 90 с
-      $wait = static function (string $u) use ($get): int { for ($i = 0; $i < 30; $i++) { $c = $get($u); if ($c === 200) { return 200; } sleep(3); } return $c; };
-      $a = $wait("http://anonymizer:8091/readyz"); echo ($a === 200 ? "[ok] Обезличивание: модели загружены" : "[FAIL] Обезличивание: HTTP $a"), "\n";
-      $s = 200;
-      if (getenv("ASR_ENABLED") === "1") { $s = $wait("http://asr:8090/readyz"); echo ($s === 200 ? "[ok] ASR: модель загружена, Redis доступен" : "[FAIL] ASR: HTTP $s"), "\n"; }
-      exit($ok && $a === 200 && $s === 200 ? 0 : 1);' || rc=1
+    dc exec -T app python -m llmp.cli verify || rc=1
     exit $rc
     ;;
   smoke)
-    rc=0; base="http://127.0.0.1:${APP_PORT}"
+    rc=0; base="http://${APP_BIND:-127.0.0.1}:${APP_PORT}"; base="${base/0.0.0.0/127.0.0.1}"
     code="$(curl -s -o /dev/null -w '%{http_code}' "$base/")"; [ "$code" = 200 ] && ok "Главная страница: 200" || { fail "Главная страница: $code"; rc=1; }
     code="$(curl -s -o /dev/null -w '%{http_code}' "$base/api.php?action=bootstrap")"; [ "$code" = 401 ] && ok "API без входа: 401" || { fail "API без входа: $code (ожидалось 401)"; rc=1; }
-    code="$(curl -s -o /dev/null -w '%{http_code}' "$base/../src/bootstrap.php")"; [ "$code" = 404 ] || [ "$code" = 403 ] && ok "Исходники недоступны: $code" || { fail "Исходники отдаются: $code"; rc=1; }
-    out="$(dc exec -T php php -r '
-      require "vendor_autoload.php";
-      $c = curl_init("http://anonymizer:8091/v1/anonymize");
-      curl_setopt_array($c, [CURLOPT_RETURNTRANSFER => 1, CURLOPT_TIMEOUT => 30, CURLOPT_POST => 1, CURLOPT_HTTPHEADER => ["Content-Type: application/json", "X-Internal-Token: " . getenv("INTERNAL_API_TOKEN")],
-        CURLOPT_POSTFIELDS => json_encode(["texts" => ["Иванов Иван Иванович, тел. +7 912 345-67-89, пароль: Qwerty!2026xyz"], "profile" => "basic"])]);
-      $r = json_decode((string) curl_exec($c), true);
-      $t = $r["texts"][0] ?? "";
-      echo (str_contains($t, "Иванов") || str_contains($t, "345-67-89") || str_contains($t, "Qwerty")) ? "LEAK" : "CLEAN";')"
+    code="$(curl -s -o /dev/null -w '%{http_code}' "$base/llmp/cli.py")"; [ "$code" = 404 ] && ok "Исходники недоступны: $code" || { fail "Исходники отдаются: $code"; rc=1; }
+    out="$(dc exec -T app python -m llmp.cli smoke-anon || true)"
     [ "$out" = CLEAN ] && ok "Обезличивание: ФИО, телефон и пароль заменены" || { fail "Обезличивание: $out"; rc=1; }
     net="$(dc exec -T anonymizer python -c 'import socket
 try:
@@ -93,7 +75,12 @@ try:
 except OSError: print("CLOSED")' 2>/dev/null || echo CLOSED)"
     [ "$net" = CLOSED ] && ok "Сервис обезличивания изолирован от интернета" || { fail "У сервиса обезличивания есть выход наружу"; rc=1; }
     if [ "${ASR_ENABLED:-0}" = 1 ]; then
-      r="$(dc exec -T asr python -c 'import urllib.request,json; print(json.loads(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8090/selftest", method="POST"), timeout=60).read()).get("ok"))' 2>/dev/null || echo False)"
+      # healthy = процесс жив; модель GigaAM после старта ещё загружается (на медленном процессоре — минуты): повтор до 3 мин
+      r=False
+      for _ in $(seq 1 36); do
+        r="$(dc exec -T asr python -c 'import urllib.request,json; print(json.loads(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8090/selftest", method="POST"), timeout=120).read()).get("ok"))' 2>/dev/null || echo False)"
+        [ "$r" = True ] && break; sleep 5
+      done
       [ "$r" = True ] && ok "ASR: тестовое распознавание выполнено" || { fail "ASR: самопроверка не прошла"; rc=1; }
     fi
     exit $rc
@@ -124,7 +111,7 @@ except OSError: print("CLOSED")' 2>/dev/null || echo CLOSED)"
   start) dc up -d ;;
   stop) dc stop ;;
   restart) dc restart ${1:+"$1"} ;;
-  admin-reset) dc exec -T php php bin/admin-reset.php ;;
+  admin-reset) dc exec -T app python -m llmp.cli admin-reset --text ;;
   backup|restore|update|rollback) exec "$(dirname "$0")/$cmd.sh" "$@" ;;
   *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

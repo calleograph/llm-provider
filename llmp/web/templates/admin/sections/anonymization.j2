@@ -1,0 +1,224 @@
+{# Раздел «Обезличивание»: встроенный сервис — состояние, движок, лаборатория, обработка файлов #}
+{% macro err(errors, name) %}{% if name in errors %}<p class="field-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
+{% macro cls(errors, name) %}{% if name in errors %} has-error{% endif %}{% endmacro %}
+{% macro field(name) %}{{ current.get(name, '') }}{% endmacro %}
+<p class="muted llm-lead">
+  Весь пользовательский текст и текст файлов обезличивается встроенным сервисом на этом сервере (контейнер
+  <code>anonymizer</code>) до отправки во внешнюю нейросеть. Подключать и выбирать ничего не нужно: если сервис
+  готов — чат работает. При любой ошибке обезличивания запрос наружу не отправляется.
+</p>
+
+<div class="grid grid-3 llm-status-row">
+  <div class="stat-tile">
+    <div class="label">Сервис обезличивания</div>
+    <div class="value {{ 'status-bad' if service_error else 'status-ok' }}">{{ 'Недоступен — чат заблокирован' if service_error else 'Готов' }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Пробное обезличивание</div>
+    <div class="value {{ 'status-warn' if last_check_at == '' else ('status-ok' if last_check_ok else 'status-bad') }}">
+      {{ 'Не проверялось' if last_check_at == '' else ('Пройдено' if last_check_ok else 'Ошибка') }}
+    </div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Когда</div>
+    <div class="value">{{ (last_check_at[:19].replace('T', ' ') ~ ' UTC') if last_check_at != '' else '—' }}</div>
+  </div>
+</div>
+{% if service_error %}
+<div class="alert alert-error">{{ service_error }}</div>
+{% elif last_check_at != '' and not last_check_ok %}
+<div class="alert alert-error">{{ settings.get('last_check_message') }}</div>
+{% endif %}
+{% if check_result is not none %}
+<div class="alert {{ 'alert-success' if check_result.ok else 'alert-error' }}">{{ check_result.message }} ({{ check_result.duration_ms|int }} мс)</div>
+{% endif %}
+
+<p class="section-title">Движок обезличивания</p>
+<form method="post" action="index.php?section=anonymization&action=save_anonymization">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p class="muted llm-note">
+    Обезличивание выполняется на этом сервере (контейнер <code>anonymizer</code>, без выхода в интернет): распознавание имён (slovnet + navec),
+    морфология ФИО (pymorphy3), ИНН/СНИЛС/ОГРН с контрольными суммами, карты, счета, адреса, телефоны, почта, IP, серверы, учётные записи,
+    суммы, номера договоров, словарь организации. Пароли, токены и ключи скрываются <strong>всегда</strong>, при любом профиле и любых правах.
+    После обработки результат проверяется повторно; при утечке или сбое запрос в нейросеть не отправляется.
+  </p>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="internal_profile">Профиль{{ setting_code('ANON_INTERNAL_PROFILE') }}</label>
+      <select class="text-input{{ cls(field_errors, 'internal_profile') }}" id="internal_profile" name="internal_profile">
+{% for p, label in {'basic': 'Базовый — люди «Иван И.», города остаются, организации с правовой формой', 'strict': 'Строгий — «Участник N», заменяется всё', 'custom': 'Настраиваемый — действия по категориям ниже'}.items() %}
+        <option value="{{ p }}" {{ 'selected' if current.get('internal_profile', 'basic') == p else '' }}>{{ label }}</option>
+{% endfor %}
+      </select>
+      {{ err(field_errors, 'internal_profile') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="internal_person_format">Имена в настраиваемом профиле</label>
+      <select class="text-input" id="internal_person_format" name="internal_person_format">
+        <option value="short" {{ 'selected' if current.get('internal_person_format', 'short') == 'short' else '' }}>«Иван И.» — читается естественно</option>
+        <option value="role" {{ 'selected' if current.get('internal_person_format', '') == 'role' else '' }}>«Лицо N» — без имён совсем</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="internal_org_scope">Организации в настраиваемом профиле</label>
+      <select class="text-input" id="internal_org_scope" name="internal_org_scope">
+        <option value="legal" {{ 'selected' if current.get('internal_org_scope', 'legal') == 'legal' else '' }}>С правовой формой и из словаря</option>
+        <option value="all" {{ 'selected' if current.get('internal_org_scope', '') == 'all' else '' }}>Все найденные</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="internal_timeout">Таймаут (сек.)</label>
+      <input class="text-input{{ cls(field_errors, 'internal_timeout') }}" type="number" id="internal_timeout" name="internal_timeout" min="5" max="600" value="{{ field('internal_timeout') }}">
+      {{ err(field_errors, 'internal_timeout') }}
+    </div>
+  </div>
+  <p class="section-title llm-subtitle">Категории (настраиваемый профиль)</p>
+  <div class="anon-categories{{ cls(field_errors, 'internal_custom_actions') }}">
+{% for cat, label in s.INTERNAL_CATEGORIES.items() %}
+    <label class="anon-category">
+      <span>{{ label }}</span>
+      <select class="text-input" name="internal_action[{{ cat }}]">
+        <option value="">как в базовом</option>
+{% for act, act_label in s.INTERNAL_ACTIONS.items() %}
+        <option value="{{ act }}" {{ 'selected' if custom_actions.get(cat, '') == act else '' }}>{{ act_label }}</option>
+{% endfor %}
+      </select>
+    </label>
+{% endfor %}
+    <label class="anon-category"><span>Пароли, токены, ключи</span><select class="text-input" disabled><option>скрываются всегда</option></select></label>
+  </div>
+  {{ err(field_errors, 'internal_custom_actions') }}
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="internal_terms">Словарь организации: «термин;категория;замена»{{ setting_code('ANON_TERMS') }}</label>
+      <textarea class="text-input mono" id="internal_terms" name="internal_terms" rows="6" placeholder="Альбатрос;project;&#10;Иванов Пётр;person;Руководитель&#10;CRM;project;Система учёта">{{ field('internal_terms') }}</textarea>
+      <p class="muted llm-note">Категории: project, organization, person, location, host, custom. Слово узнаётся в любой форме. Пустая замена — обозначение категории.</p>
+      {{ err(field_errors, 'internal_terms') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="internal_exceptions">Исключения — никогда не заменять</label>
+      <textarea class="text-input" id="internal_exceptions" name="internal_exceptions" rows="6" placeholder="Название своей компании&#10;Общеизвестные названия">{{ field('internal_exceptions') }}</textarea>
+      {{ err(field_errors, 'internal_exceptions') }}
+    </div>
+    <div class="field">
+      <label class="field-label" for="internal_domains">Внутренние домены</label>
+      <textarea class="text-input mono" id="internal_domains" name="internal_domains" rows="6" placeholder="corp.example.com">{{ field('internal_domains') }}</textarea>
+      <p class="muted llm-note">Адреса и имена серверов в этих доменах заменяются; *.local, *.corp, *.lan — всегда.</p>
+      {{ err(field_errors, 'internal_domains') }}
+    </div>
+  </div>
+  <div class="llm-actions">
+    <button class="btn btn-primary" type="submit">Сохранить</button>
+    <button class="btn" type="submit" form="checkAnonymization"{{ '' if settings.is_configured() else ' disabled' }}>Пробное обезличивание</button>
+  </div>
+</form>
+<form id="checkAnonymization" method="post" action="index.php?section=anonymization&action=check_anonymization">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+</form>
+
+<hr class="sep">
+<p class="section-title" id="lab">Проверка: что уйдёт в нейросеть</p>
+<p class="muted llm-note">Тот же путь, что у сообщения в чате: извлечение текста из файла (с OCR) → обезличивание → повторная проверка.
+  Исходные значения показываются только вам на этой странице и в журнал не записываются.</p>
+<form method="post" action="index.php?section=anonymization&action=lab_anonymization#lab" enctype="multipart/form-data" class="anon-lab-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field anon-lab-text">
+      <label class="field-label" for="lab_text">Текст</label>
+      <textarea class="text-input" id="lab_text" name="lab_text" rows="6" placeholder="Вставьте текст с персональными данными для проверки">{{ lab_input.text }}</textarea>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="lab_file">или документ</label>
+      <input class="text-input" type="file" id="lab_file" name="lab_file" accept="{{ lab_accept }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="lab_profile">Профиль для проверки</label>
+      <select class="text-input" id="lab_profile" name="lab_profile">
+        <option value="">текущий ({{ s.INTERNAL_PROFILES.get(settings.get('internal_profile'), 'Базовый') }})</option>
+{% for p, label in s.INTERNAL_PROFILES.items() %}
+        <option value="{{ p }}" {{ 'selected' if lab_input.profile == p else '' }}>{{ label }}</option>
+{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Проверить</button></div>
+</form>
+{% if lab_error is not none %}
+<div class="alert alert-error">{{ lab_error }}</div>
+{% elif lab is not none %}
+{% set b = lab.batch %}
+<div class="grid grid-3 llm-status-row">
+  <div class="stat-tile"><div class="label">Источник</div><div class="value">{{ lab.format }}, {{ lab.chars }} знаков</div></div>
+  <div class="stat-tile"><div class="label">Замен</div><div class="value">{{ b.replaced|int }}</div></div>
+  <div class="stat-tile"><div class="label">Время</div><div class="value">{{ b.duration_ms|int }} мс · проверка пройдена</div></div>
+</div>
+{% if b.stats %}
+<p class="muted llm-note">По категориям: {{ lab.stats }}</p>
+{% endif %}
+{% for w in b.warnings %}<div class="alert alert-warn">{{ w }}</div>{% endfor %}
+
+<div class="anon-lab-result">
+  <div><p class="field-label">Исходный текст</p><pre class="anon-lab-pre">{{ lab.source[:20000] }}</pre></div>
+  <div><p class="field-label">Уйдёт в нейросеть</p><pre class="anon-lab-pre">{{ lab.text[:20000] }}</pre></div>
+</div>
+{% if lab.replacements %}
+<div class="llm-table-wrap">
+<table class="data-table">
+  <thead><tr><th>Найдено</th><th>Замена</th><th>Категория</th><th>Правило</th><th>Почему</th></tr></thead>
+  <tbody>
+{% for r in lab.replacements %}
+    <tr><td>{{ r.original if r.original is not none else '' }}</td><td>{{ r.replacement if r.replacement is not none else '' }}</td>
+      <td>{{ r.category_label }}</td>
+      <td class="mono">{{ r.rule if r.rule is not none else '' }}</td><td>{{ r.evidence if r.evidence is not none else '' }}</td></tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% if b.candidates %}
+<p class="muted llm-note">Оставлены как обычная речь: {{ lab.candidates }}.
+  Если это имя — добавьте его в словарь.</p>
+{% endif %}
+{% endif %}
+
+<hr class="sep">
+
+<p class="section-title">Обработка файлов</p>
+<div class="status-line-group">
+{% for tool, available in tools.items() %}
+  <span class="status-line"><span class="label">{{ tool }}:</span> <span class="value {{ 'status-ok' if available else 'status-bad' }}">{{ 'есть' if available else 'не найден' }}</span></span>
+{% endfor %}
+  <span class="status-line"><span class="label">Языки OCR:</span> <span class="value {{ 'status-bad' if ocr_langs is none else ('status-ok' if files.ocr_languages.split('+')|reject('in', ocr_langs)|list|length == 0 else 'status-warn') }}">{{ 'не определены' if ocr_langs is none else (ocr_langs|join(', ') or 'не установлены') }}</span></span>
+  <span class="status-line"><span class="label">Временный каталог:</span> <span class="value {{ 'status-ok' if tmp_ok else 'status-bad' }}">{{ 'доступен для записи' if tmp_ok else 'недоступен для записи' }}</span></span>
+</div>
+<p class="muted llm-note">
+  Текст извлекается здесь же, на сервере: TXT/CSV, DOCX/ODT/XLSX — встроенно; PDF — <code>pdftotext</code>; сканы и изображения —
+  <code>pdftoppm</code> + <code>tesseract</code>. Инструменты входят в образ приложения. Если для файла нужен недоступный инструмент,
+  отправка блокируется. Исходный файл никуда не передаётся и удаляется сразу после извлечения текста.
+</p>
+{% set file_field_codes = {'max_upload_mb': 'FILE_MAX_UPLOAD_MB', 'max_extracted_chars': 'FILE_MAX_EXTRACTED_CHARS', 'ocr_max_pages': 'FILE_OCR_MAX_PAGES', 'tool_timeout': 'FILE_TOOL_TIMEOUT'} %}
+<form method="post" action="index.php?section=anonymization&action=save_file_processing">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+{% for name, label in {'max_upload_mb': 'Макс. размер файла (МБ)', 'max_extracted_chars': 'Макс. извлекаемый текст (символов)', 'ocr_max_pages': 'Макс. страниц OCR', 'tool_timeout': 'Таймаут инструментов (сек.)'}.items() %}
+    <div class="field">
+      <label class="field-label" for="{{ name }}">{{ label }}{{ setting_code(file_field_codes[name]) }}</label>
+      <input class="text-input{{ cls(file_errors, name) }}" type="number" id="{{ name }}" name="{{ name }}" value="{{ files[name] }}">
+      {{ err(file_errors, name) }}
+    </div>
+{% endfor %}
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="ocr_languages">Языки OCR{{ setting_code('FILE_OCR_LANGUAGES') }}</label>
+      <input class="text-input mono{{ cls(file_errors, 'ocr_languages') }}" id="ocr_languages" name="ocr_languages" value="{{ files.ocr_languages }}">
+      {{ err(file_errors, 'ocr_languages') }}
+    </div>
+  </div>
+  <div class="llm-switch-row">
+    <label class="switch"><input type="checkbox" id="ocr_enabled" name="ocr_enabled" value="1" {{ 'checked' if files.ocr_enabled == '1' else '' }}><span class="track"></span> Локальный OCR для сканов{{ setting_code('FILE_OCR_ENABLED') }}</label>
+  </div>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить параметры файлов</button></div>
+</form>

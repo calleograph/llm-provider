@@ -1,0 +1,93 @@
+<p class="section-title">Оформление</p>
+<form method="post" action="index.php?section=system&action=update_site_theme">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="site_theme">Тема по умолчанию для всех{{ setting_code('SITE_THEME') }}</label>
+      <select class="text-input" id="site_theme" name="site_theme">
+{% for id, label, hint in themes %}
+        <option value="{{ id }}"{{ ' selected' if id == site_theme_value else '' }}>{{ label }} — {{ hint|lower }}</option>
+{% endfor %}
+      </select>
+    </div>
+  </div>
+  <p class="muted llm-note">Действует для пользователей, которые не выбрали тему сами (в чате и в панели управления — внизу боковой панели). Выбор пользователя хранится в его браузере и важнее этой настройки.</p>
+  <button class="btn btn-primary" type="submit">Сохранить</button>
+</form>
+
+<hr class="sep">
+
+<p class="section-title">Сессия администратора</p>
+<form method="post" action="index.php?section=system&action=update_admin_idle_timeout">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="admin_idle_timeout_minutes">Таймаут бездействия, минут (5–{{ max_minutes }}){{ setting_code('ADMIN_IDLE_TIMEOUT') }}</label>
+      <input class="text-input" type="number" min="5" max="{{ max_minutes }}" id="admin_idle_timeout_minutes" name="admin_idle_timeout_minutes" value="{{ idle_minutes }}">
+    </div>
+  </div>
+  <p class="muted llm-note">Сеанс администратора завершается автоматически после указанного периода без действий в панели.</p>
+  <button class="btn btn-primary" type="submit">Сохранить</button>
+</form>
+
+<hr class="sep">
+
+<p class="section-title">Доверенные reverse proxy</p>
+<p class="muted">Заголовок X-Forwarded-For учитывается только если непосредственный адрес подключения входит в этот список (IP или CIDR через запятую).</p>
+<form method="post" action="index.php?section=system&action=update_trusted_proxies">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="trusted_proxies">Список доверенных адресов{{ setting_code('TRUSTED_PROXIES') }}</label>
+      <textarea class="text-input" id="trusted_proxies" name="trusted_proxies" rows="2" placeholder="10.0.0.10, 10.0.0.0/24">{{ trusted_proxies|join(', ') }}</textarea>
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit">Сохранить</button>
+</form>
+
+<hr class="sep">
+
+<p class="section-title">Резервное копирование</p>
+<p class="muted">
+  Зашифрованная копия всех данных (база, сертификаты, конфигурация) — кнопка «Создать резервную копию» в разделе
+  <a href="index.php?section=maintenance">«Обслуживание и состояние»</a> или <code>scripts/backup.sh</code> на сервере; копия создаётся
+  и перед каждым обновлением. Ключ копий <code>.backup.key</code> в каталоге установки сохраните вне сервера: без него копию не восстановить.
+</p>
+
+<p class="section-title">Конфигурация LLM-чата</p>
+<p class="muted">
+  Экспорт/восстановление доменов и групп, нейросетей, прав доступа «группа → нейросеть» и общих
+  параметров чата в один ZIP-архив. API-ключи нейросетей и пароли служебных учёток LDAP в архив
+  <strong>не попадают</strong> ни в открытом, ни в зашифрованном виде — после восстановления их нужно
+  ввести заново вручную в разделах «Подключения LLM API» и «LDAP-подключения»/«Доступ к чату».
+</p>
+<div class="form-row">
+  <div class="field">
+    <a class="btn btn-primary" href="index.php?section=system&action=export_llm_config&csrf={{ csrf|urlencode }}">Скачать архив конфигурации</a>
+  </div>
+</div>
+
+<form method="post" action="index.php?section=system&action=import_llm_config" enctype="multipart/form-data"
+      data-confirm-title="Восстановить конфигурацию из архива?"
+      data-confirm-text="Настройки доменов, нейросетей и прав доступа из архива будут применены поверх текущих (по имени). Действие необратимо без отдельной резервной копии.">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="archive">Восстановить из архива (.zip){{ setting_code('CONFIG_RESTORE') }}</label>
+      <input class="text-input" type="file" id="archive" name="archive" accept=".zip" required>
+      <p class="muted llm-note">Существующие домены/нейросети (по имени) будут обновлены, новые — добавлены. Ничего не удаляется.</p>
+    </div>
+  </div>
+  <button class="btn btn-danger" type="submit">Восстановить</button>
+</form>
+
+{% if warnings %}
+<div class="alert alert-warn">
+  <p>Предупреждения при восстановлении:</p>
+  <ul>
+{% for warning in warnings %}
+    <li>{{ warning }}</li>
+{% endfor %}
+  </ul>
+</div>
+{% endif %}

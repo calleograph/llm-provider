@@ -1,0 +1,195 @@
+<div class="llm-toolbar log-tabs">
+  <div class="log-tab-links">
+    <a class="btn btn-small {{ 'btn-primary' if tab == 'all' else '' }}" href="index.php?section=log&tab=all">Все события</a>
+    <a class="btn btn-small {{ 'btn-primary' if tab == 'operations' else '' }}" href="index.php?section=log&tab=operations">Операции пользователей</a>
+    <a class="btn btn-small {{ 'btn-primary' if tab == 'audit' else '' }}" href="index.php?section=log&tab=audit">Административный аудит</a>
+    <a class="btn btn-small {{ 'btn-primary' if tab == 'diagnostics' else '' }}" href="index.php?section=log&tab=diagnostics">Диагностика связи</a>
+  </div>
+  <a class="btn btn-small" href="{{ export_url }}">Скачать .txt</a>
+</div>
+
+{% if tab == 'all' %}
+<form method="get" action="index.php" class="form-row log-filter-row">
+  <input type="hidden" name="section" value="log">
+  <input type="hidden" name="tab" value="all">
+  <div class="field">
+    <label class="field-label">Поиск по логину / IP / тексту события</label>
+    <input class="text-input" name="search" value="{{ search }}" placeholder="например: ivanov или 10.0.0.10.176">
+  </div>
+  <div class="field">
+    <label class="field-label">Категория</label>
+    <select class="text-input" name="category">
+      <option value="">Все категории</option>
+{% for value, label in category_options.items() %}
+      <option value="{{ value }}" {{ 'selected' if category == value else '' }}>{{ label }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field log-filter-submit">
+    <button class="btn" type="submit">Найти</button>
+  </div>
+</form>
+<p class="muted">
+  Единая лента: работа пользователей с нейросетями, действия администраторов и техническая диагностика — всё
+  вместе по времени. Найдите конкретную учётную запись поиском выше, чтобы увидеть всю её историю сразу.
+</p>
+{% endif %}
+
+<p class="muted">Всего записей: {{ result.total }}. Страница {{ num }} из {{ total_pages }}.</p>
+
+{% if tab == 'all' %}
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th></th><th>Дата</th><th>Категория</th><th>Кто / откуда</th><th>Событие</th><th>Подробности</th></tr></thead>
+  <tbody>
+{% for row in result.rows %}
+    <tr>
+      <td>{{ outcome_icon(row.outcome) }}</td>
+      <td class="mono">{{ row.created_at }}</td>
+      <td><span class="badge badge-inactive">{{ category_label(row.category) }}</span></td>
+      <td>{{ row.actor if row.actor is not none else '—' }} <span class="muted mono meta">{{ row.ip or '' }}</span></td>
+      <td>{{ row.event_type }}</td>
+      <td class="cell-wrap">{{ row.summary }}{% if row.details %}<br><span class="muted mono meta">{{ row.details }}</span>{% endif %}</td>
+    </tr>
+{% endfor %}
+{% if not result.rows %}
+    <tr><td colspan="6" class="muted">Записей не найдено.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+{% elif tab == 'operations' %}
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr>
+    <th></th>
+    <th>{{ sort_link('created_at', 'Дата') }}</th>
+    <th>{{ sort_link('ip', 'IP') }}</th>
+    <th>{{ sort_link('username', 'Логин') }}</th>
+    <th>{{ sort_link('operation', 'Операция') }}</th>
+    <th>{{ sort_link('result', 'Результат') }}</th>
+  </tr></thead>
+  <tbody>
+{% for row in result.rows %}
+{% set ok = 'SUCCESS' in row.result or row.result.startswith('success') %}
+{% set warn = 'REQUIRED' in row.result %}
+    <tr>
+      <td>{{ outcome_icon('success' if ok else ('warning' if warn else 'failure')) }}</td>
+      <td class="mono">{{ row.created_at }}</td>
+      <td class="mono">{{ row.ip }}</td>
+      <td>{{ row.username or '' }}</td>
+      <td>{{ row.operation }}</td>
+      <td><span class="{{ 'status-ok' if ok else ('status-warn' if warn else 'status-bad') }}">{{ row.result }}</span></td>
+    </tr>
+{% endfor %}
+{% if not result.rows %}
+    <tr><td colspan="6" class="muted">Записей пока нет.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+{% elif tab == 'audit' %}
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr>
+    <th></th>
+    <th>{{ sort_link('created_at', 'Дата') }}</th>
+    <th>{{ sort_link('actor', 'Кто') }}</th>
+    <th>{{ sort_link('ip', 'Откуда') }}</th>
+    <th>{{ sort_link('action', 'Действие') }}</th>
+    <th>Детали</th>
+    <th>{{ sort_link('success', 'Результат') }}</th>
+  </tr></thead>
+  <tbody>
+{% for row in result.rows %}
+    <tr>
+      <td>{{ outcome_icon('success' if row.success|int == 1 else 'failure') }}</td>
+      <td class="mono">{{ row.created_at }}</td>
+      <td>{{ row.actor }}</td>
+      <td class="mono">{{ row.ip }}</td>
+      <td>{{ row.action }}</td>
+      <td class="mono">{{ row.details or '' }}</td>
+      <td>{% if row.success|int == 1 %}<span class="status-ok">успех</span>{% else %}<span class="status-bad">ошибка</span>{% endif %}</td>
+    </tr>
+{% endfor %}
+{% if not result.rows %}
+    <tr><td colspan="7" class="muted">Записей пока нет.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+{% else %}
+<form method="get" action="index.php" class="form-row log-filter-row">
+  <input type="hidden" name="section" value="log">
+  <input type="hidden" name="tab" value="diagnostics">
+  <div class="field">
+    <label class="field-label">Уровень</label>
+    <select class="text-input" name="level">
+      <option value="">Все</option>
+{% for level in levels %}
+      <option value="{{ level }}" {{ 'selected' if diag.level == level else '' }}>{{ level }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label">Источник</label>
+    <select class="text-input" name="source">
+      <option value="">Все</option>
+{% for source in sources %}
+      <option value="{{ source }}" {{ 'selected' if diag.source == source else '' }}>{{ source }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label">Поиск по тексту</label>
+    <input class="text-input" name="search" value="{{ diag.search or '' }}" placeholder="код ошибки, host, сообщение…">
+  </div>
+  <div class="field">
+    <label class="field-label">С даты (ISO 8601)</label>
+    <input class="text-input" name="since" value="{{ diag.since or '' }}" placeholder="2026-09-01T00:00:00Z">
+  </div>
+  <div class="field">
+    <label class="field-label">По дату (ISO 8601)</label>
+    <input class="text-input" name="until" value="{{ diag.until or '' }}" placeholder="2026-09-16T23:59:59Z">
+  </div>
+  <div class="field log-filter-submit">
+    <button class="btn" type="submit">Применить фильтр</button>
+  </div>
+</form>
+
+<p class="muted">Значения паролей, API-ключей и тексты запросов/файлов в этом журнале не сохраняются никогда.</p>
+
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr>
+    <th></th>
+    <th>{{ sort_link('created_at', 'Дата', diag) }}</th>
+    <th>{{ sort_link('level', 'Уровень', diag) }}</th>
+    <th>{{ sort_link('source', 'Источник', diag) }}</th>
+    <th>{{ sort_link('event_code', 'Код', diag) }}</th>
+    <th>Сообщение</th>
+    <th>Контекст</th>
+    <th>IP</th>
+  </tr></thead>
+  <tbody>
+{% for row in result.rows %}
+    <tr>
+      <td>{{ outcome_icon('failure' if row.level == 'error' else ('warning' if row.level == 'warning' else 'success')) }}</td>
+      <td class="mono">{{ row.created_at }}</td>
+      <td>
+        <span class="{{ 'status-bad' if row.level == 'error' else ('status-warn' if row.level == 'warning' else 'muted') }}">{{ row.level }}</span>
+      </td>
+      <td>{{ row.source }}</td>
+      <td class="mono">{{ row.event_code }}</td>
+      <td class="cell-wrap">{{ row.message }}</td>
+      <td class="mono cell-wrap">{{ row.context or '' }}</td>
+      <td class="mono">{{ row.ip or '' }}</td>
+    </tr>
+{% endfor %}
+{% if not result.rows %}
+    <tr><td colspan="8" class="muted">Записей не найдено.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+{% endif %}
+
+{% if total_pages > 1 %}
+<nav class="pager" aria-label="Страницы журнала">
+  <a class="btn btn-small{{ ' muted' if num <= 1 else '' }}" href="{{ prev_url }}"{% if num <= 1 %} aria-disabled="true" tabindex="-1"{% endif %}>← Назад</a>
+  <span class="muted">Страница {{ num }} из {{ total_pages }}</span>
+  <a class="btn btn-small{{ ' muted' if num >= total_pages else '' }}" href="{{ next_url }}"{% if num >= total_pages %} aria-disabled="true" tabindex="-1"{% endif %}>Вперёд →</a>
+</nav>
+{% endif %}

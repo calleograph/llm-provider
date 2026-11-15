@@ -1,0 +1,197 @@
+{# Раздел «Доступ к чату» (перенос public/admin/sections/chat_access.php) #}
+{% macro category_select(prefix, selected) %}<select class="text-input" name="{{ prefix }}[limit_category_id]" aria-label="Категория лимита"><option value="0">По умолчанию</option>{% for cat in limit_categories %}<option value="{{ cat.id }}"{{ ' selected' if selected == cat.id }}>{{ cat.name }}</option>{% endfor %}</select>{% endmacro %}
+<p class="muted llm-lead">
+  Кому разрешён доступ к LLM-чату: доменные группы или отдельные пользователи домена. Пользователь
+  видит объединение нейросетей всех своих прав (по группам и персональных). Права проверяются на
+  сервере при каждом запросе — подмена идентификатора нейросети в запросе доступа не даёт.
+  Колонка «Без обезличивания» — разрешает пользователям этой группы/учётной записи ставить в чате
+  галочку «не обезличивать» для конкретного сообщения (текст и вложения уйдут в нейросеть напрямую,
+  минуя обезличивание) — включайте только для доверенных сотрудников; каждое такое сообщение
+  фиксируется в журнале.
+</p>
+
+{% for card in domain_cards %}{% set domain = card.domain %}{% set id = domain.id() %}
+<div class="llm-card" id="domain-{{ id }}">
+  <div class="llm-card-head">
+    <h2>{{ domain.config.name }}</h2>
+    <div>
+      <span class="badge {{ 'badge-active' if domain.llm_enabled else 'badge-inactive' }}">Чат: {{ 'включён' if domain.llm_enabled else 'выключен' }}</span>
+      <button class="btn btn-small" type="submit" form="verifyGroups{{ id }}"{{ ' disabled' if not card.subjects }}>Проверить в AD</button>
+    </div>
+  </div>
+{% if not domain.llm_enabled %}
+  <p class="muted llm-note">Домен выключен для чата (раздел «LDAP-подключения») — доступ ниже не действует, пока домен не включён.</p>
+{% endif %}
+
+  <form method="post" action="index.php?section=chat_access&action=save_subjects#domain-{{ id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ id }}">
+
+    <p class="section-title">Группы</p>
+    <div class="llm-table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Отображаемое имя</th><th>CN или полный DN группы</th><th>Статус</th><th>Категория лимита</th><th>Без обезличивания</th><th></th></tr></thead>
+      <tbody id="groupRows{{ id }}">
+{% for group in card.group_subjects %}{% set gid = group.id | int %}
+        <tr>
+          <td><input class="text-input" name="groups[{{ gid }}][display_name]" value="{{ group.display_name }}" required></td>
+          <td><input class="text-input mono" name="groups[{{ gid }}][group_ref]" value="{{ group.group_ref }}" required></td>
+          <td><label class="switch"><input type="checkbox" name="groups[{{ gid }}][enabled]" value="1" {{ 'checked' if group.is_enabled }}><span class="track"></span></label></td>
+          <td>{{ category_select('groups[' ~ gid ~ ']', group.limit_category_id | int if group.limit_category_id is not none else none) }}</td>
+          <td><label class="switch switch-danger" title="Разрешить членам группы отправлять сообщения без обезличивания (галочка на стороне пользователя, в чате)"><input type="checkbox" name="groups[{{ gid }}][allow_unanonymized]" value="1" {{ 'checked' if group.allow_unanonymized }}><span class="track"></span></label></td>
+          <td><label class="llm-inline-check llm-danger-check"><input type="checkbox" name="groups[{{ gid }}][delete]" value="1"> удалить</label></td>
+        </tr>
+{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <template id="groupTemplate{{ id }}">
+      <tr class="llm-new-row">
+        <td><input class="text-input" name="new_groups[__INDEX__][display_name]" placeholder="Пользователи ChatGPT"></td>
+        <td><input class="text-input mono" name="new_groups[__INDEX__][group_ref]" placeholder="CN=LLM-Users,OU=Groups,DC=example,DC=local или LLM-Users"></td>
+        <td><label class="switch"><input type="checkbox" name="new_groups[__INDEX__][enabled]" value="1" checked><span class="track"></span></label></td>
+        <td>{{ category_select('new_groups[__INDEX__]', none) }}</td>
+        <td><label class="switch switch-danger"><input type="checkbox" name="new_groups[__INDEX__][allow_unanonymized]" value="1"><span class="track"></span></label></td>
+        <td><button type="button" class="btn btn-small" data-remove-row>Убрать</button></td>
+      </tr>
+    </template>
+{% if not card.group_subjects %}
+    <p class="muted llm-note">Групп пока нет.</p>
+{% endif %}
+    <div class="llm-actions">
+      <button type="button" class="btn btn-small" data-add-row="groupTemplate{{ id }}" data-add-row-target="groupRows{{ id }}">+ Добавить группу</button>
+    </div>
+
+    <p class="section-title">Отдельные пользователи</p>
+    <div class="llm-table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Доменное имя (sAMAccountName)</th><th>Статус</th><th>Категория лимита</th><th>Без обезличивания</th><th></th></tr></thead>
+      <tbody id="userRows{{ id }}">
+{% for subject in card.user_subjects %}{% set uid = subject.id | int %}
+        <tr>
+          <td><input class="text-input mono" name="groups[{{ uid }}][display_name]" value="{{ subject.display_name }}" required></td>
+          <td><label class="switch"><input type="checkbox" name="groups[{{ uid }}][enabled]" value="1" {{ 'checked' if subject.is_enabled }}><span class="track"></span></label></td>
+          <td>{{ category_select('groups[' ~ uid ~ ']', subject.limit_category_id | int if subject.limit_category_id is not none else none) }}</td>
+          <td><label class="switch switch-danger" title="Разрешить пользователю отправлять сообщения без обезличивания (галочка на стороне пользователя, в чате)"><input type="checkbox" name="groups[{{ uid }}][allow_unanonymized]" value="1" {{ 'checked' if subject.allow_unanonymized }}><span class="track"></span></label></td>
+          <td><label class="llm-inline-check llm-danger-check"><input type="checkbox" name="groups[{{ uid }}][delete]" value="1"> удалить</label>
+              <input type="hidden" name="groups[{{ uid }}][group_ref]" value="{{ subject.group_ref }}"></td>
+        </tr>
+{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <template id="userTemplate{{ id }}">
+      <tr class="llm-new-row">
+        <td><input class="text-input mono" name="new_users[__INDEX__][sam_account_name]" placeholder="ivanov"></td>
+        <td><label class="switch"><input type="checkbox" name="new_users[__INDEX__][enabled]" value="1" checked><span class="track"></span></label></td>
+        <td>{{ category_select('new_users[__INDEX__]', none) }}</td>
+        <td><label class="switch switch-danger"><input type="checkbox" name="new_users[__INDEX__][allow_unanonymized]" value="1"><span class="track"></span></label></td>
+        <td><button type="button" class="btn btn-small" data-remove-row>Убрать</button></td>
+      </tr>
+    </template>
+{% if not card.user_subjects %}
+    <p class="muted llm-note">Отдельных пользователей пока нет.</p>
+{% endif %}
+    <div class="llm-actions">
+      <button type="button" class="btn btn-small" data-add-row="userTemplate{{ id }}" data-add-row-target="userRows{{ id }}">+ Добавить пользователя</button>
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+    </div>
+  </form>
+  <form id="verifyGroups{{ id }}" method="post" action="index.php?section=chat_access&action=verify_groups#domain-{{ id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ id }}">
+  </form>
+
+{% if id in verify_results %}
+  <div class="llm-table-wrap"><table class="data-table llm-result">
+    <thead><tr><th class="llm-col-icon"></th><th>Кому</th><th>Задано</th><th>Найдено в каталоге</th></tr></thead>
+    <tbody>
+{% for row in verify_results[id] %}
+      <tr>
+        <td><span class="status-dot {{ 'status-ok' if row.ok else 'status-bad' }}" role="img" aria-label="{{ 'Успешно' if row.ok else 'Ошибка' }}" title="{{ 'Успешно' if row.ok else 'Ошибка' }}"></span></td>
+        <td>{{ row.display_name }}</td>
+        <td class="mono">{{ row.group_ref }}</td>
+        <td class="mono">{% if row.dn is not none %}{{ row.dn }}{% else %}<span class="status-bad">не найдено (или CN неоднозначен)</span>{% endif %}</td>
+      </tr>
+{% endfor %}
+    </tbody>
+  </table></div>
+{% endif %}
+</div>
+{% endfor %}
+
+{% if not domain_cards %}
+<div class="alert alert-warn">Нет ни одного LDAP-подключения — добавьте в разделе <a href="index.php?section=ldap">«LDAP-подключения»</a>.</div>
+{% endif %}
+
+<hr class="sep">
+
+<p class="section-title">Права на нейросети</p>
+<p class="muted llm-lead">
+  Единая матрица: и группы, и отдельные пользователи выше, и индивидуальные права уже вошедших
+  пользователей чата (в дополнение к правам их групп) — настраиваются в одном месте. Последняя
+  колонка «Без обезличивания» — личное разрешение конкретному уже вошедшему пользователю ставить
+  в чате галочку «не обезличивать» (в дополнение к групповому праву из таблиц выше); доступна
+  только для строк с персональным доступом, так как групповое право задаётся отдельно.
+</p>
+{% if not providers %}
+<div class="alert alert-warn">Нужна хотя бы одна нейросеть (раздел <a href="index.php?section=llm_providers">«Подключения LLM API»</a>).</div>
+{% else %}
+<form method="post" action="index.php?section=chat_access&action=save_permissions">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="llm-table-wrap">
+  <table class="data-table llm-matrix">
+    <thead>
+      <tr>
+        <th>Домен</th>
+        <th>Кому</th>
+{% for provider in providers %}
+        <th class="llm-matrix-col">
+          {{ provider.name }}
+          <span class="muted mono llm-matrix-sub">{{ provider.model }}{{ '' if provider.is_enabled else ' · откл.' }}</span>
+        </th>
+{% endfor %}
+        <th class="llm-matrix-col" title="Личное разрешение отправлять сообщения без обезличивания — только для уже вошедших пользователей">Без обезличивания</th>
+      </tr>
+    </thead>
+    <tbody>
+{% for group in all_groups %}{% set gid = group.id | int %}{% set is_user = (group.subject_type or 'group') == subject_user %}
+      <tr class="{{ '' if group.is_enabled else 'llm-row-muted' }}">
+        <td>{{ group.domain_name }}</td>
+        <td>
+          {{ group.display_name }}
+          <span class="muted mono llm-matrix-sub">{{ 'пользователь' if is_user else group.group_ref }}{{ '' if group.is_enabled else ' · отключено' }}</span>
+        </td>
+{% for provider in providers %}{% set pid = provider.id | int %}
+        <td class="llm-matrix-col">
+          <input type="checkbox" name="perm[{{ gid }}][]" value="{{ pid }}" aria-label="{{ group.display_name }} → {{ provider.name }}"
+                 {{ 'checked' if pid in matrix.get(gid, []) }}>
+        </td>
+{% endfor %}
+        <td class="llm-matrix-col muted" title="Задаётся выше, в таблицах групп/отдельных пользователей">—</td>
+      </tr>
+{% endfor %}
+{% if user_profiles %}
+      <tr class="table-group-row"><td colspan="{{ 3 + providers | length }}">Индивидуальный доступ вошедших пользователей (в дополнение к группам)</td></tr>
+{% for profile in user_profiles %}{% set owner_key = profile.owner_key | string %}{% set selected = user_provider_matrix.get(owner_key, []) %}
+      <tr>
+        <td>{{ profile.domain_fqdn }}</td>
+        <td>{{ profile.username }}<span class="muted mono llm-matrix-sub">персональный доступ</span></td>
+{% for provider in providers %}{% set pid = provider.id | int %}
+        <td class="llm-matrix-col">
+          <input type="checkbox" name="user_perm[{{ owner_key }}][]" value="{{ pid }}"
+                 aria-label="{{ profile.username }} → {{ provider.name }}" {{ 'checked' if pid in selected }}>
+        </td>
+{% endfor %}
+        <td class="llm-matrix-col">
+          <input type="checkbox" name="unanon_perm[{{ owner_key }}]" value="1" class="llm-unanon-check"
+                 aria-label="{{ profile.username }} → без обезличивания" {{ 'checked' if profile.allow_unanonymized }}>
+        </td>
+{% endfor %}
+{% endif %}
+    </tbody>
+  </table>
+  </div>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить права</button></div>
+</form>
+{% endif %}

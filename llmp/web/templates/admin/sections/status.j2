@@ -1,0 +1,87 @@
+{% if first_setup %}
+<div class="alert alert-success">
+  Аварийный доступ создан. Завершите настройку в разделе <a href="index.php?section=ldap">«LDAP-подключения»</a>:
+  1. загрузите CA-сертификат, 2. создайте и проверьте подключение к AD,
+  затем <a href="index.php?section=access">3. укажите группу администраторов</a>.
+</div>
+{% endif %}
+<div class="alert {{ 'alert-success' if overall else 'alert-warn' }}">
+{% if overall %}
+  Всё в порядке: активная конфигурация настроена, сертификаты загружены, связь с AD установлена.
+{% else %}
+  Обнаружены проблемы конфигурации — см. подсветку ниже (<span class="status-bad">красным</span>/<span class="status-warn">жёлтым</span>).
+{% endif %}
+</div>
+
+<div class="grid grid-3">
+  <div class="stat-tile">
+    <div class="label">Активная конфигурация</div>
+    <div class="value">{% if active is not none %}{{ active.name }}{% else %}<span class="status-bad">не задана</span>{% endif %}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">LDAPS host : port</div>
+    <div class="value">{{ (active.host ~ ' : ' ~ active.port) if active is not none else '—' }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Связь с AD (LDAPS)</div>
+    <div class="value {{ 'status-ok' if link is true else ('status-bad' if link is false else '') }}">
+{% if link is none %}
+      — (нет активной конфигурации)
+{% else %}
+      {{ 'Установлена' if link else 'Недоступна' }}
+{% endif %}
+    </div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Состояние CA bundle</div>
+    <div class="value {{ 'status-ok' if bundle_ok else 'status-bad' }}">{{ 'Собран' if bundle_ok else 'Не собран' }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Ближайший срок окончания сертификата</div>
+    <div class="value {{ 'status-warn' if expiry_soon else '' }}">{{ nearest if nearest is not none else '—' }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="label">Загружено сертификатов</div>
+    <div class="value">{{ certs|length }}</div>
+  </div>
+</div>
+
+{% if not link and active is not none %}
+<p class="muted">
+  Нет связи с AD. Проверьте: доступен ли host <code>{{ active.host }}</code>
+  по порту <code>{{ active.port|int }}</code> с сервера приложения, загружен ли
+  корректный CA-сертификат в разделе «Сертификаты», и совпадает ли Subject/CN сертификата AD с
+  тем, что настроен здесь. Подробности — в разделе «Журнал» → «Диагностика связи».
+</p>
+{% endif %}
+
+<hr class="sep">
+
+<p class="section-title">Права на каталоги данных</p>
+<div class="status-line-group">
+{% for label, ok in writable.items() %}
+  <span class="status-line"><span class="label">{{ label }}:</span> <span class="value {{ 'status-ok' if ok else 'status-bad' }}">{{ 'Запись разрешена' if ok else 'Нет прав на запись' }}</span></span>
+{% endfor %}
+</div>
+
+<hr class="sep">
+
+<p class="section-title">Последние ошибки диагностики</p>
+{% if not errors %}
+<p class="muted">Ошибок не зафиксировано.</p>
+{% else %}
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Дата</th><th>Источник</th><th>Код</th><th>Сообщение</th></tr></thead>
+  <tbody>
+{% for row in errors %}
+    <tr>
+      <td class="mono">{{ row.created_at }}</td>
+      <td>{{ row.source }}</td>
+      <td class="mono">{{ row.event_code }}</td>
+      <td class="cell-wrap">{{ row.message }}</td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table></div>
+<p><a href="index.php?section=log&tab=diagnostics">Открыть полный диагностический журнал</a></p>
+{% endif %}

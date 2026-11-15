@@ -1,0 +1,212 @@
+{# Раздел «Телеметрия»: сводка, журнал запросов к внешним LLM, диалоги пользователя (только чтение) #}
+{% macro outcome(value) %}{% if value == 'ok' %}<span class="status-ok">успех</span>{% elif value == 'empty' %}<span class="status-warn">пустой ответ</span>{% else %}<span class="status-bad">{{ value }}</span>{% endif %}{% endmacro %}
+
+{% if view == 'record' %}
+<p><a href="{{ url(**{'period': f.period}) }}">← К журналу запросов</a></p>
+{% if record is none %}
+<div class="alert alert-warn">Запись не найдена (возможно, удалена по сроку хранения).</div>
+{% else %}
+<p class="section-title">Запрос №{{ record.id }} — {{ kind_labels.get(record.kind, record.kind) }}</p>
+<dl class="kv">
+  <dt>Время (UTC)</dt><dd class="mono">{{ record.created_at }}</dd>
+  <dt>Пользователь</dt><dd><a href="{{ url(view='user', user=record.owner_key) }}">{{ record.owner_key }}</a></dd>
+  <dt>Нейросеть и модель</dt><dd>{{ record.provider_name or '—' }} · {{ record.model_name or '—' }}{% if record.fallback_from %} <span class="muted">(резерв вместо «{{ record.fallback_from }}»)</span>{% endif %}</dd>
+  <dt>Диалог</dt><dd>{% if record.conversation_id %}<a href="{{ url(view='conversation', id=record.conversation_id) }}">№{{ record.conversation_id }}</a>{% else %}—{% endif %}{% if record.project_id %} · проект №{{ record.project_id }}{% endif %}</dd>
+  <dt>Обезличивание</dt><dd>{% if record.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% else %}обезличено{% endif %}</dd>
+  <dt>Вложения</dt><dd>{% if record.attachment_count %}{{ record.attachment_count }} ({{ record.attachment_types }}){% else %}нет{% endif %}</dd>
+  <dt>Токены</dt><dd class="mono">{{ record.tokens }} (вход {{ record.input_tokens if record.input_tokens is not none else '—' }}, выход {{ record.output_tokens if record.output_tokens is not none else '—' }})</dd>
+  <dt>Длительность</dt><dd class="mono">{{ record.duration_ms }} мс</dd>
+  <dt>Результат</dt><dd>{{ outcome(record.outcome) }}</dd>
+</dl>
+<p class="section-title">Текст, ушедший во внешнюю нейросеть ({{ record.text_chars }} симв.)</p>
+{% if record.text %}<pre class="tele-text">{{ record.text }}</pre>{% else %}<p class="muted">Текст не сохраняется для служебных запросов (сводки, состояние проекта) — их содержание составлено из уже обезличенной истории.</p>{% endif %}
+{% endif %}
+
+{% elif view == 'user' %}
+<p><a href="{{ url(**{'period': f.period}) }}">← К журналу запросов</a></p>
+<div class="llm-toolbar">
+  <p class="section-title">Диалоги пользователя {{ owner }}</p>
+  <a class="btn btn-small" href="{{ url(user=owner, period='30') }}">Запросы пользователя за 30 дней</a>
+</div>
+<p class="muted">Только чтение. Показано то, что хранится в истории пользователя (обезличенный текст); удалённые им диалоги здесь не видны — они остаются только в журнале запросов.</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Диалог</th><th>Проект</th><th>Создан</th><th>Обновлён</th><th>Сообщений</th><th>Токены</th></tr></thead>
+  <tbody>
+{% for c in conversations %}
+    <tr>
+      <td class="cell-wrap"><a href="{{ url(view='conversation', id=c.id) }}">{{ c.title }}</a></td>
+      <td>{{ c.project or '—' }}</td>
+      <td class="mono">{{ c.created_at }}</td>
+      <td class="mono">{{ c.updated_at }}</td>
+      <td class="mono">{{ c.messages }}</td>
+      <td class="mono">{{ c.tokens }}</td>
+    </tr>
+{% endfor %}
+{% if not conversations %}
+    <tr><td colspan="6" class="muted">Диалогов нет.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+
+{% elif view == 'conversation' %}
+{% if conv is none %}
+<p><a href="{{ url() }}">← К журналу запросов</a></p>
+<div class="alert alert-warn">Диалог не найден (пользователь мог его удалить).</div>
+{% else %}
+<p><a href="{{ url(view='user', user=conv.owner_key) }}">← К диалогам {{ conv.owner_key }}</a></p>
+<p class="section-title">{{ conv.title }}</p>
+<p class="muted">Создан {{ conv.created_at }}, обновлён {{ conv.updated_at }}{% if conv.project %}, проект «{{ conv.project }}»{% endif %}. Только чтение, текст — как хранится (обезличенный).</p>
+<div class="tele-transcript">
+{% for msg in messages %}
+  <article class="tele-msg">
+    <p class="tele-msg-head">
+      <strong>{{ 'Пользователь' if msg.role == 'user' else 'Ответ модели' }}</strong>
+      <span class="muted mono">{{ msg.created_at }}</span>
+      {% if msg.model %}<span class="muted">{{ msg.model }}</span>{% endif %}
+      {% if msg.attachment_type %}<span class="muted">вложения: {{ msg.attachment_type }}</span>{% endif %}
+      {% if msg.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% endif %}
+    </p>
+    <pre class="tele-text">{{ msg.content }}</pre>
+  </article>
+{% endfor %}
+{% if not messages %}<p class="muted">Сообщений нет.</p>{% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<p class="muted llm-lead">
+  Журнал всего, что уходило во внешние нейросети: кто, когда, какой моделью, сколько токенов и точный текст сообщения
+  в том виде, в каком он ушёл. Журнал не зависит от удаления диалогов пользователями. Каждый просмотр записи,
+  переписки пользователя и каждая выгрузка фиксируются в административном аудите.
+</p>
+
+<form method="get" action="index.php" class="form-row log-filter-row">
+  <input type="hidden" name="section" value="telemetry">
+  <div class="field">
+    <label class="field-label" for="tele_period">Период</label>
+    <select class="text-input" id="tele_period" name="period">
+{% for value, label in periods.items() %}
+      <option value="{{ value }}" {{ 'selected' if f.period == value else '' }}>{{ label }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_from">С даты (для своего периода)</label>
+    <input class="text-input" type="date" id="tele_from" name="from" value="{{ f.from }}">
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_to">По дату</label>
+    <input class="text-input" type="date" id="tele_to" name="to" value="{{ f.to }}">
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_user">Пользователь</label>
+    <input class="text-input" id="tele_user" name="user" value="{{ f.owner_key }}" placeholder="ivanov@corp.local">
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_model">Модель</label>
+    <select class="text-input" id="tele_model" name="model">
+      <option value="">Все модели</option>
+{% for name in models %}
+      <option value="{{ name }}" {{ 'selected' if f.model_name == name else '' }}>{{ name }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_kind">Тип запроса</label>
+    <select class="text-input" id="tele_kind" name="kind">
+      <option value="">Все типы</option>
+{% for value, label in kind_labels.items() %}
+      <option value="{{ value }}" {{ 'selected' if f.kind == value else '' }}>{{ label }}</option>
+{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label" for="tele_q">Поиск по тексту</label>
+    <input class="text-input" id="tele_q" name="q" value="{{ f.q }}" placeholder="слово из сообщения">
+  </div>
+  <div class="field log-filter-submit">
+    <label class="llm-inline-check"><input type="checkbox" name="unanon" value="1" {{ 'checked' if f.unanonymized else '' }}> Только без обезличивания</label>
+  </div>
+  <div class="field log-filter-submit">
+    <button class="btn btn-primary" type="submit">Показать</button>
+  </div>
+</form>
+
+<div class="grid tele-totals">
+  <div class="stat-tile"><div class="label">Запросов</div><div class="value">{{ overview.totals.requests }}</div></div>
+  <div class="stat-tile"><div class="label">Токенов</div><div class="value">{{ '{:,}'.format(overview.totals.tokens).replace(',', ' ') }}</div></div>
+  <div class="stat-tile"><div class="label">Пользователей</div><div class="value">{{ overview.totals.users }}</div></div>
+  <div class="stat-tile"><div class="label">Без обезличивания</div><div class="value {{ 'status-warn' if overview.totals.unanonymized else '' }}">{{ overview.totals.unanonymized }}</div></div>
+  <div class="stat-tile"><div class="label">Ошибок</div><div class="value {{ 'status-bad' if overview.totals.errors else '' }}">{{ overview.totals.errors }}</div></div>
+</div>
+
+<div class="grid grid-3 tele-tops">
+{% for title, rows, first, is_user in (('Больше всего токенов', overview.top_tokens, 'tokens', true), ('Больше всего запросов', overview.top_requests, 'requests', true), ('Модели', overview.top_models, 'requests', false)) %}
+  <section class="tele-top">
+    <p class="section-title">{{ title }}</p>
+    <div class="llm-table-wrap"><table class="data-table">
+      <thead><tr><th>{{ 'Пользователь' if is_user else 'Модель' }}</th><th>{{ 'Токены' if first == 'tokens' else 'Запросы' }}</th><th>{{ 'Запросы' if first == 'tokens' else 'Токены' }}</th></tr></thead>
+      <tbody>
+{% for r in rows %}
+        <tr>
+          <td class="cell-wrap">{% if is_user %}<a href="{{ url(view='user', user=r.name) }}">{{ r.name }}</a>{% else %}{{ r.name or '—' }}{% endif %}</td>
+          <td class="mono">{{ r[first] }}</td>
+          <td class="mono">{{ r.requests if first == 'tokens' else r.tokens }}</td>
+        </tr>
+{% endfor %}
+{% if not rows %}
+        <tr><td colspan="3" class="muted">Нет данных за период.</td></tr>
+{% endif %}
+      </tbody>
+    </table></div>
+  </section>
+{% endfor %}
+</div>
+
+<div class="llm-toolbar">
+  <p class="section-title">Запросы к внешним нейросетям</p>
+  <a class="btn btn-small" href="{{ export_url }}">Скачать CSV</a>
+</div>
+<p class="muted">Найдено: {{ result.total }}. Страница {{ num }} из {{ total_pages }}.</p>
+<div class="llm-table-wrap"><table class="data-table tele-log">
+  <thead><tr><th>Время (UTC)</th><th>Пользователь</th><th>Тип</th><th>Модель</th><th>Токены</th><th>Результат</th><th></th></tr></thead>
+  <tbody>
+{% for r in result.rows %}
+    <tr>
+      <td class="mono">{{ r.created_at[:16]|replace('T', ' ') }}</td>
+      <td class="cell-wrap"><a href="{{ url(view='user', user=r.owner_key) }}">{{ r.owner_key }}</a>{% if r.unanonymized %} <span class="badge tele-badge-raw">без обезличивания</span>{% endif %}</td>
+      <td>{{ kind_labels.get(r.kind, r.kind) }}{% if r.attachment_count %} <span class="muted meta">+{{ r.attachment_count }} влож.</span>{% endif %}</td>
+      <td class="tele-model">{{ r.model_name or '—' }}{% if r.fallback_from %} <span class="muted meta">резерв</span>{% endif %}</td>
+      <td class="mono">{{ r.tokens }}</td>
+      <td>{{ outcome(r.outcome) }}</td>
+      <td><a class="btn btn-small" href="{{ url(view='record', id=r.id) }}">Открыть</a></td>
+    </tr>
+{% endfor %}
+{% if not result.rows %}
+    <tr><td colspan="7" class="muted">Запросов не найдено.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+
+{% if total_pages > 1 %}
+<nav class="pager" aria-label="Страницы журнала запросов">
+  <a class="btn btn-small{{ ' muted' if num <= 1 else '' }}" href="{{ prev_url }}"{% if num <= 1 %} aria-disabled="true" tabindex="-1"{% endif %}>← Назад</a>
+  <span class="muted">Страница {{ num }} из {{ total_pages }}</span>
+  <a class="btn btn-small{{ ' muted' if num >= total_pages else '' }}" href="{{ next_url }}"{% if num >= total_pages %} aria-disabled="true" tabindex="-1"{% endif %}>Вперёд →</a>
+</nav>
+{% endif %}
+
+<hr class="sep">
+<p class="section-title">Хранение</p>
+<form method="post" action="index.php?section=telemetry&action=save_retention">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="telemetry_retention_days">Хранить телеметрию, дней (0 — бессрочно){{ setting_code('TELEMETRY_RETENTION_DAYS') }}</label>
+      <input class="text-input" type="number" min="0" max="3650" id="telemetry_retention_days" name="telemetry_retention_days" value="{{ retention }}">
+    </div>
+  </div>
+  <p class="muted llm-note">Записи старше срока удаляются автоматически раз в час. Удаление диалогов пользователями на журнал не влияет.</p>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button></div>
+</form>
+{% endif %}

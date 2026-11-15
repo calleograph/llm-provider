@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,7 +37,11 @@ def models():
                 navec = Navec.load(str(NLP_DIR / NAVEC_FILE))
                 ner = NER.load(str(NLP_DIR / NER_FILE))
                 ner.navec(navec)
-                _models["ner"], _models["morph"] = ner, pymorphy3.MorphAnalyzer()
+                morph_ = pymorphy3.MorphAnalyzer()
+                # Разбор слова не зависит от контекста, а слова в тексте повторяются: кэш на процесс экономит ~30 % времени длинного текста.
+                # Кортеж вместо списка — общий результат никто не изменит. До ≈4 КБ на слово, предел ≈ 80 МБ.
+                morph_.parse = lru_cache(maxsize=20_000)(lambda word, _parse=morph_.parse: tuple(_parse(word)))
+                _models["ner"], _models["morph"] = ner, morph_
             except Exception as exc:  # noqa: BLE001
                 raise NlpUnavailable(f"модели распознавания имён недоступны ({type(exc).__name__}): {NLP_DIR}") from None
         return _models["ner"], _models["morph"]

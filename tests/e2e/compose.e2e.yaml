@@ -1,4 +1,4 @@
-# Только для сквозных проверок: заглушка LLM по HTTPS и доверие php к тестовой CA. В рабочей установке не используется.
+# Только для сквозных проверок: заглушка LLM по HTTPS и доверие приложения к тестовой CA (системное хранилище в образе app). В рабочей установке не используется.
 services:
   llmstub:
     image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
@@ -11,6 +11,9 @@ services:
         aliases: [llm.example.com]
     user: "65534:65534"
     read_only: true
-  php:
+  app:
+    environment:
+      PYTHONPATH: /srv/app
     volumes:
       - ${E2E_CERTS:?}/bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+      - ./tests/e2e:/srv/app/tests/e2e:ro

@@ -68,3 +68,7 @@ ip:1\.1\.1\.1
 ip:224\.0\.0\.0
 ip:240\.0\.0\.0
 opensmodel.sberdevices.ru
+# --- имена модулей Python, похожие на домены (зона .app)
+llmp.web.app
+admin.app
+client.app

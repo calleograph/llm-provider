@@ -585,12 +585,13 @@ class Anonymizer:
 
     def _verify(self, res: Result) -> None:
         """Повторная проверка результата: секрет после замены — ошибка; фамилия участника, оставшаяся в тексте, — дозаменяется с предупреждением."""
+        left = find_secrets(res.text)                       # один поиск на каждую версию текста (раньше чистый текст проверялся дважды)
         for _ in range(2):
-            if not find_secrets(res.text):
+            if not left:
                 break
             res.text, n = mask_secrets(res.text)
             res.warnings.append(f"При повторной проверке скрыто секретов: {n}")
-        left = find_secrets(res.text)
+            left = find_secrets(res.text)
         if left:
             raise PrivacyError("verification_failed", "После обезличивания в тексте остался секрет (правило " + left[0].rule + "): отправка остановлена.")
         if not self.policy.use_ner or self.policy.action("person") == "keep":

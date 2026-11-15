@@ -47,8 +47,6 @@ sanitize_project_env() {
   done
 }
 
-require_vars() { local v m=0; for v in "$@"; do [ -n "${!v:-}" ] || { fail "Не задана переменная $v в $ENV_FILE"; m=1; }; done; [ "$m" -eq 0 ] || exit 1; }
-
 validate_project_name() {
   [[ "${COMPOSE_PROJECT_NAME:-}" =~ ^[a-z][a-z0-9_-]{2,40}$ ]] || die "COMPOSE_PROJECT_NAME: a-z0-9_- , с буквы, 3–41 символ"
   case "$COMPOSE_PROJECT_NAME" in
@@ -101,36 +99,30 @@ rand_hex() { openssl rand -hex "${1:-32}"; }
 
 # set_default КЛЮЧ ЗНАЧЕНИЕ — записать в .env, только если значения ещё нет (повторный запуск секреты не меняет; ArkLock).
 set_default() {
-  local key="$1" val="$2" cur
-  cur="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
-  [ -n "$cur" ] && return 0
-  if grep -qE "^${key}=" "$ENV_FILE"; then
-    local tmp; tmp="$(mktemp "${ENV_FILE}.XXXX")"
-    awk -v k="$key" -v v="$val" 'BEGIN{FS=OFS="="} $1==k {print k"="v; next} {print}' "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
-  else
-    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
-  fi
+  [ -n "$(grep -E "^${1}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)" ] || set_value "$1" "$2"
 }
 
-# set_value КЛЮЧ ЗНАЧЕНИЕ — записать всегда (параметры мастера установки, не секреты).
+# Значение — через окружение, а не awk -v: не видно в ps и не разбираются экранирования «\».
 set_value() {
-  local key="$1" val="$2" tmp
+  local key="$1" tmp
   if grep -qE "^${key}=" "$ENV_FILE"; then
     tmp="$(mktemp "${ENV_FILE}.XXXX")"
-    awk -v k="$key" -v v="$val" 'BEGIN{FS=OFS="="} $1==k {print k"="v; next} {print}' "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
+    _V="$2" awk -v k="$key" 'BEGIN{FS=OFS="="} $1==k {print k"="ENVIRON["_V"]; next} {print}' "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
   else
-    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
+    printf '%s=%s\n' "$key" "$2" >> "$ENV_FILE"
   fi
 }
 
 app_version() { cat "$REPO_ROOT/VERSION" 2>/dev/null || echo 0.0.0; }
 app_commit() { git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown; }
 
-# Каталоги данных и права для пользователей контейнеров (www-data 33 — php; 10001 — сервисы Python; 999 — redis).
+# Каталоги данных и права для пользователей контейнеров (www-data 33 — приложение; 10001 — обезличивание и ASR; 999 — redis).
 # chown делается одноразовым контейнером: работает и от root, и от пользователя группы docker.
 prepare_data_dirs() {
-  run mkdir -p "$DATA_ROOT"/{app,updater,models/gigaam,backups}
-  run docker run --rm -v "$DATA_ROOT:/d" "${HELPER_IMAGE:-alpine:3.21}" sh -c 'chown -R 33:33 /d/app /d/updater && chmod 750 /d/app && chmod 1777 /d/updater && chmod -R a+rX /d/models'
+  # updater — владелец репозитория (от его имени работает помощник), приложение только читает; его запросы — в updater/inbox
+  run mkdir -p "$DATA_ROOT"/{app,updater/inbox,models/gigaam,backups}
+  run docker run --rm -v "$DATA_ROOT:/d" "${HELPER_IMAGE:-alpine:3.21}" sh -c "chown -R 33:33 /d/app /d/updater/inbox && chmod 750 /d/app && chmod 770 /d/updater/inbox \
+    && chown $(stat -c %u:%g "$REPO_ROOT") /d/updater && chmod 755 /d/updater && find /d/updater -maxdepth 1 -type l -delete && chmod -R a+rX /d/models"
 }
 
 wait_healthy() { # ждать, пока все сервисы проекта станут healthy

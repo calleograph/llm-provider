@@ -1,0 +1,76 @@
+{# Раздел «Почта и уведомления» (HTML-часть mail.php) #}
+{% macro f(k) %}{{ current.get(k, '') }}{% endmacro %}
+{% macro err(k) %}{% if k in field_errors %}<p class="field-error">{{ field_errors[k] }}</p>{% endif %}{% endmacro %}
+<p class="muted llm-lead">
+  Почта нужна для уведомлений администраторам: модель ушла на паузу после сбоев, все модели недоступны. Пароль хранится зашифрованным и в форму не
+  возвращается; при смене сервера или порта сохранённый пароль сбрасывается. Письма ждут отправки в очереди зашифрованными, временные ошибки
+  повторяются до 5 раз, неверный пароль — никогда (чтобы не заблокировать учётную запись в каталоге).
+</p>
+<form method="post" action="index.php?section=mail&action=save_mail" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="llm-switch-row"><label class="switch"><input type="checkbox" name="enabled" value="1" {{ 'checked' if current.get('enabled', '0') == '1' else '' }}><span class="track"></span> Отправка почты включена</label></div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="host">SMTP-сервер</label><input class="text-input" id="host" name="host" value="{{ f('host') }}" placeholder="smtp.example.com">{{ err('host') }}</div>
+    <div class="field"><label class="field-label" for="port">Порт</label><input class="text-input" type="number" id="port" name="port" value="{{ f('port') }}">{{ err('port') }}</div>
+    <div class="field"><label class="field-label" for="security">Шифрование</label>
+      <select class="text-input" id="security" name="security">{% for k, l in security.items() %}<option value="{{ k }}" {{ 'selected' if current.get('security', '') == k else '' }}>{{ l }}</option>{% endfor %}</select>{{ err('security') }}</div>
+  </div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="auth">Авторизация</label>
+      <select class="text-input" id="auth" name="auth">{% for k, l in auth.items() %}<option value="{{ k }}" {{ 'selected' if current.get('auth', '') == k else '' }}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="field"><label class="field-label" for="username">Логин</label><input class="text-input" id="username" name="username" value="{{ f('username') }}"></div>
+    <div class="field"><label class="field-label" for="password">Пароль</label>
+      <input class="text-input" type="password" id="password" name="password" autocomplete="new-password" placeholder="{{ 'сохранён — оставьте пустым, чтобы не менять' if settings.has_password() else 'хранится зашифрованным' }}">{{ err('password') }}</div>
+  </div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="from_address">Адрес отправителя</label><input class="text-input" id="from_address" name="from_address" value="{{ f('from_address') }}" placeholder="llm-noreply@example.com">{{ err('from_address') }}</div>
+    <div class="field"><label class="field-label" for="from_name">Имя отправителя</label><input class="text-input" id="from_name" name="from_name" value="{{ f('from_name') }}">{{ err('from_name') }}</div>
+    <div class="field"><label class="field-label" for="timeout">Таймаут этапа, сек.</label><input class="text-input" type="number" id="timeout" name="timeout" value="{{ f('timeout') }}">{{ err('timeout') }}</div>
+  </div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="alert_recipients">Кому отправлять уведомления (через запятую)</label><input class="text-input" id="alert_recipients" name="alert_recipients" value="{{ f('alert_recipients') }}" placeholder="it-admins@example.com"></div>
+    <div class="field"><label class="field-label" for="helo">Имя для EHLO (необязательно)</label><input class="text-input" id="helo" name="helo" value="{{ f('helo') }}" placeholder="llm.example.com"></div>
+  </div>
+  <div class="llm-switch-row">
+    <label class="switch"><input type="checkbox" name="verify_cert" value="1" {{ 'checked' if current.get('verify_cert', '1') == '1' else '' }}><span class="track"></span> Проверять сертификат сервера (отключать только во внутренней сети)</label>
+    <label class="switch"><input type="checkbox" name="alerts_enabled" value="1" {{ 'checked' if current.get('alerts_enabled', '1') == '1' else '' }}><span class="track"></span> Уведомлять о проблемах моделей (не чаще раза в час на повод)</label>
+  </div>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button>
+    <button class="btn" type="submit" form="mailCheck">Проверить соединение</button></div>
+</form>
+<form id="mailCheck" method="post" action="index.php?section=mail&action=check_mail"><input type="hidden" name="csrf" value="{{ csrf }}"></form>
+
+<form method="post" action="index.php?section=mail&action=test_mail" class="form-row">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="field"><label class="field-label" for="to">Тестовое письмо на адрес</label><input class="text-input" id="to" name="to" type="email" placeholder="you@example.com"></div>
+  <div class="field field-actions"><button class="btn" type="submit">Отправить тестовое письмо</button></div>
+</form>
+
+{% if check_result is not none %}
+<div class="alert {{ 'alert-success' if check_result.ok else 'alert-error' }}">{{ 'Все этапы пройдены.' if check_result.ok else 'Остановка: ' ~ code_names.get(check_result.code, check_result.code|string) ~ '.' }}</div>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Этап</th><th>Результат</th><th>Подробности</th></tr></thead>
+  <tbody>
+{% for st in check_result.stages %}
+    <tr><td>{{ stage_names.get(st.stage, st.stage) }}</td>
+      <td class="{{ 'muted' if st.skipped else ('status-ok' if st.ok else 'status-bad') }}">{{ 'не применяется' if st.skipped else ('успешно' if st.ok else code_names.get(st.code, 'ошибка')) }}</td>
+      <td class="mono">{{ st.info if st.info is not none else '' }}</td></tr>
+{% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<hr class="sep">
+<p class="section-title">Очередь и журнал писем (30 дней)</p>
+<form method="post" action="index.php?section=mail&action=process_queue" class="llm-actions"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-small" type="submit">Отправить ожидающие сейчас</button></form>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Создано (UTC)</th><th>Шаблон</th><th>Кому</th><th>Статус</th><th>Попыток</th><th>Ошибка</th></tr></thead>
+  <tbody>
+{% if not rows %}<tr><td colspan="6" class="muted">Писем пока не было.</td></tr>{% endif %}
+{% for r in rows %}
+    <tr><td>{{ (r.created_at|string)[:16].replace('T', ' ') }}</td><td>{{ r.template }}</td><td>{{ r.to_addr }}</td>
+      <td>{{ status_names.get(r.status, r.status|string) }}</td>
+      <td>{{ r.attempts|int }}</td><td>{{ code_names.get(r.last_error or '', r.last_error or '') }}</td></tr>
+{% endfor %}
+  </tbody>
+</table></div>

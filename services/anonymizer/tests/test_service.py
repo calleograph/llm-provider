@@ -67,3 +67,23 @@ def test_long_text_and_parallel_requests(client):
         res = list(ex.map(lambda _: client.post("/v1/anonymize", json={"texts": [text], "profile": "strict"}), range(4)))
     assert all(r.status_code == 200 for r in res)
     assert all("Петров" not in r.json()["texts"][0] and "7707083893" not in r.json()["texts"][0] for r in res)
+
+
+def test_ready_only_after_warm_up_and_fail_closed_on_warm_up_error(monkeypatch):
+    """/readyz становится 200 только после пробной обработки: первый запрос пользователя не платит за загрузку моделей."""
+    calls = []
+    monkeypatch.setattr(main.Anonymizer, "process", lambda self, text: calls.append(text) or (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setitem(main._state, "ready", False)
+    main._warm()
+    assert calls and main._state["ready"] is False and main._state["error"]
+    monkeypatch.undo()
+    main._warm()
+    assert main._state["ready"] is True and main._state["error"] is None
+
+
+def test_morph_parse_cache_returns_same_immutable_result():
+    from app.privacy import names
+    m = names.morph()
+    a, b = m.parse("Петрову"), m.parse("Петрову")
+    assert a is b and isinstance(a, tuple), "разбор слова кэшируется на процесс и не может быть изменён вызывающим"
+    assert [p.normal_form for p in a] == [p.normal_form for p in m.parse.__wrapped__("Петрову")]

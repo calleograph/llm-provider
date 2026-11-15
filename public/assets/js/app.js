@@ -19,7 +19,6 @@ document.addEventListener('DOMContentLoaded', function () {
   initRevealButtons();
   initAddRowButtons();
   initProviderTypeDefaults();
-  initAnonymizationProfile();
   initLimitCategoryToggle();
   initSettingsSearch();
   highlightSettingsAnchor();
@@ -137,23 +136,6 @@ function initLimitCategoryToggle() {
       input.disabled = checkbox.checked;
     });
   });
-}
-
-/* «Обезличивание»: показывает поля выбранного типа API (DocClean / JSON). */
-function initAnonymizationProfile() {
-  var select = document.querySelector('select[data-anon-profile]');
-  if (!select) {
-    return;
-  }
-  function apply() {
-    document.querySelectorAll('[data-profile-section]').forEach(function (section) {
-      // Список профилей через пробел; поля скрытого блока выключаются, чтобы required не мешал отправке формы.
-      section.hidden = section.getAttribute('data-profile-section').split(' ').indexOf(select.value) < 0;
-      section.querySelectorAll('input, select, textarea').forEach(function (el) { el.disabled = section.hidden; });
-    });
-  }
-  select.addEventListener('change', apply);
-  apply();
 }
 
 /* Кнопки «+» в админке: раскрывают скрытый блок новой записи (домен,
@@ -295,44 +277,67 @@ function fallbackCopy(value, done) {
 }
 
 /**
- * Переключатель светлой/тёмной темы. Применяется ко всей странице
- * (data-theme на <html>), запоминается в localStorage только на этом
- * устройстве/браузере — не влияет ни на сервер, ни на других пользователей.
- * По умолчанию — светлая тема, независимо от системных настроек.
+ * Выбор темы оформления (набор тем «Переговорки»). Применяется ко всей странице
+ * (data-theme на <html>; «Как в системе» — без атрибута), запоминается в
+ * localStorage 'llm:theme' только в этом браузере. Пока пользователь не выбрал
+ * тему сам, действует тема администратора или «Стекло» — см. theme.js.
  */
 function initThemeToggle() {
-  var buttons = document.querySelectorAll('[data-theme-btn]');
-  if (!buttons.length) {
+  var pickers = document.querySelectorAll('[data-theme-picker]');
+  if (!pickers.length) {
     return;
   }
+  var root = document.documentElement;
 
-  var STORAGE_KEY = 'pwd-page-theme';
-
-  function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    buttons.forEach(function (button) {
-      var active = button.dataset.themeBtn === theme;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
+  function render(theme) {
+    pickers.forEach(function (picker) {
+      picker.querySelectorAll('[data-theme-btn]').forEach(function (button) {
+        var active = button.dataset.themeBtn === theme;
+        button.setAttribute('aria-pressed', String(active));
+        if (active) {
+          picker.querySelector('[data-theme-label]').textContent = button.querySelector('.theme-opt-label').textContent;
+          picker.querySelector('[data-theme-dot]').dataset.swatch = theme;
+        }
+      });
     });
-    try {
-      localStorage.setItem(STORAGE_KEY, theme);
-    } catch (err) {
-      // localStorage недоступен (приватный режим и т.п.) — тема просто не запомнится.
+  }
+
+  render(root.getAttribute('data-theme') || 'glass');
+  pickers.forEach(function (picker) {
+    picker.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-theme-btn]');
+      if (!button) {
+        return;
+      }
+      var theme = button.dataset.themeBtn;
+      root.setAttribute('data-theme', theme);
+      try {
+        localStorage.setItem('llm:theme', theme);
+      } catch (err) {
+        // localStorage недоступен (приватный режим и т.п.) — тема просто не запомнится.
+      }
+      render(theme);
+      picker.open = false;
+      picker.querySelector('summary').focus();
+    });
+  });
+  // меню закрывается по Escape и щелчку мимо
+  document.addEventListener('click', function (event) {
+    pickers.forEach(function (picker) {
+      if (picker.open && !picker.contains(event.target)) {
+        picker.open = false;
+      }
+    });
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') {
+      return;
     }
-  }
-
-  var savedTheme = 'light';
-  try {
-    savedTheme = localStorage.getItem(STORAGE_KEY) || 'light';
-  } catch (err) {
-    // ignore
-  }
-
-  applyTheme(savedTheme === 'dark' ? 'dark' : 'light');
-  buttons.forEach(function (button) {
-    button.addEventListener('click', function () {
-      applyTheme(button.dataset.themeBtn);
+    pickers.forEach(function (picker) {
+      if (picker.open) {
+        picker.open = false;
+        picker.querySelector('summary').focus();
+      }
     });
   });
 }
@@ -346,9 +351,9 @@ function initConfirmModal() {
   var overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML =
-    '<div class="modal-box" role="alertdialog" aria-modal="true">' +
-    '  <h2 class="modal-title"></h2>' +
-    '  <p class="modal-text"></p>' +
+    '<div class="modal-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle" aria-describedby="confirmModalText">' +
+    '  <h2 class="modal-title" id="confirmModalTitle"></h2>' +
+    '  <p class="modal-text" id="confirmModalText"></p>' +
     '  <div class="modal-actions">' +
     '    <button type="button" class="btn modal-cancel">Отмена</button>' +
     '    <button type="button" class="btn btn-danger modal-confirm">Подтвердить</button>' +
@@ -361,10 +366,13 @@ function initConfirmModal() {
   var cancelBtn = overlay.querySelector('.modal-cancel');
   var confirmBtn = overlay.querySelector('.modal-confirm');
   var pendingForm = null;
+  var returnFocus = null;
 
   function close() {
     overlay.classList.remove('open');
     pendingForm = null;
+    if (returnFocus && document.contains(returnFocus)) returnFocus.focus();
+    returnFocus = null;
   }
 
   cancelBtn.addEventListener('click', close);
@@ -374,8 +382,13 @@ function initConfirmModal() {
     }
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) {
+    if (!overlay.classList.contains('open')) return;
+    if (e.key === 'Escape') {
       close();
+    } else if (e.key === 'Tab') {
+      // фокус остаётся внутри окна: две кнопки, переход по кругу
+      e.preventDefault();
+      (document.activeElement === cancelBtn ? confirmBtn : cancelBtn).focus();
     }
   });
   confirmBtn.addEventListener('click', function () {
@@ -392,7 +405,9 @@ function initConfirmModal() {
       titleEl.textContent = form.getAttribute('data-confirm-title') || 'Подтвердите действие';
       textEl.textContent = form.getAttribute('data-confirm-text');
       pendingForm = form;
+      returnFocus = e.submitter || document.activeElement;
       overlay.classList.add('open');
+      cancelBtn.focus();
     });
   });
 }

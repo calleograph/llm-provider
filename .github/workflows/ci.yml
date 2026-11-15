@@ -18,22 +18,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: bash -n
-        run: for f in install.sh scripts/*.sh scripts/lib/*.sh; do bash -n "$f"; done
+        run: for f in install.sh scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh; do bash -n "$f"; done
       - name: shellcheck
-        run: sudo apt-get install -y shellcheck >/dev/null && shellcheck -S error install.sh scripts/*.sh scripts/lib/*.sh
+        run: sudo apt-get install -y shellcheck >/dev/null && shellcheck -S error install.sh scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh
+      - name: "обновление по git: check-updates, автопочинка, update.sh (без Docker)"
+        run: bash tests/scripts/update_test.sh
       - name: compose config
         run: cp .env.example .env && sed -i 's/^APP_MASTER_KEY=.*/APP_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/; s/^INTERNAL_API_TOKEN=.*/INTERNAL_API_TOKEN=x/; s/^DICTATION_SECRET=.*/DICTATION_SECRET=x/; s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=x/' .env && docker compose config -q
 
-  php:
+  app:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: build php image
-        run: docker build -f docker/php/Dockerfile -t llmp-php:ci .
-      - name: "phpunit в образе (ext-ldap, ext-zip — без пропусков)"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - name: "poppler и tesseract (извлечение PDF и OCR — тесты без пропусков)"
+        run: sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-rus >/dev/null
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: build app image
+        run: docker build -f docker/app/Dockerfile -t llmp-app:ci .
+      - name: приложение в образе отвечает на healthz
         run: |
-          curl -sSLo phpunit.phar https://phar.phpunit.de/phpunit-11.phar
-          docker run --rm --user 33 --tmpfs /data/app:uid=33 -v "$PWD/phpunit.phar:/opt/phpunit.phar:ro" -w /srv/app llmp-php:ci php /opt/phpunit.phar --do-not-cache-result
+          docker run -d --name app --tmpfs /data/app:uid=33 -e APP_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= llmp-app:ci
+          for i in $(seq 1 30); do docker exec app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)" && exit 0; sleep 2; done
+          docker logs app; exit 1
 
   anonymizer:
     runs-on: ubuntu-24.04

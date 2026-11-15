@@ -14,6 +14,9 @@ COPY wheels/ /tmp/wheels/
 RUN set -e; W=$(ls /tmp/wheels/natasha-*.whl 2>/dev/null | head -1 || true); \
     python /tmp/fetch_models.py /opt/nlp $W && rm -rf /tmp/fetch_models.py /tmp/wheels
 ENV PRIVACY_NLP_DIR=/opt/nlp
+# NER (slovnet) считает на numpy/OpenBLAS: малые матрицы, один поток быстрее. Без этого OpenBLAS запускает потоки по числу ядер хоста,
+# и при лимите CPU (--cpus 2) или параллельных запросах они мешают друг другу: обработка медленнее в 3–4 раза (docs/ANONYMIZATION.md, «Скорость»).
+ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 
 COPY app ./app
 RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin app
@@ -24,4 +27,5 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
 
 ARG APP_VERSION=0.0.0
 ENV APP_VERSION=${APP_VERSION}
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091", "--workers", "1", "--no-access-log"]
+# keep-alive 75 с: приложение держит соединение открытым до 60 с (llmp/http.py) и не тратит время на новое на каждое сообщение.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091", "--workers", "1", "--timeout-keep-alive", "75", "--no-access-log"]

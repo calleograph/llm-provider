@@ -1,0 +1,52 @@
+<p class="section-title">Группа администраторов Active Directory</p>
+<p class="muted">Пользователи, состоящие в этой группе (прямо или через вложенные группы), могут входить в административную часть доменной учётной записью.</p>
+<dl class="kv">
+  <dt>Текущий DN группы</dt><dd class="mono">{{ active.admin_group_dn if active is not none else '—' }}</dd>
+</dl>
+
+<form method="post" action="index.php?section=access&action=update_admin_group">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="admin_group_dn">Новый DN группы администраторов{{ setting_code('ADMIN_GROUP_DN') }}</label>
+      <input class="text-input" id="admin_group_dn" name="admin_group_dn" value="{{ active.admin_group_dn if active is not none else '' }}" required>
+    </div>
+  </div>
+  <p class="muted">Для проверки существования группы в каталоге укажите доменные логин/пароль (не сохраняются).</p>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label">Доменный логин (для проверки)</label>
+      <input class="text-input" name="confirm_username" autocomplete="off">
+    </div>
+    <div class="field">
+      <label class="field-label">Пароль</label>
+      <input class="text-input" type="password" name="confirm_password" autocomplete="off">
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit">Проверить и сохранить</button>
+</form>
+
+<hr class="sep">
+
+<p class="section-title">Локальный аварийный администратор</p>
+<p class="muted">Логин: <strong>{{ local_username }}</strong>. Независим от Active Directory. Создание второго локального администратора не предусмотрено. Пароль меняется из уже подтверждённой административной сессии — старый пароль повторно не запрашивается.</p>
+<form method="post" action="index.php?section=access&action=change_local_admin_password">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label">Новый пароль (не короче 16 символов)</label>
+      <div class="password-field-wrap">
+        <input class="text-input" type="password" id="new_local_password" name="new_local_password" required minlength="16" autocomplete="new-password">
+        <button type="button" class="toggle-password" data-target="new_local_password">Показать</button>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label">Повторите новый пароль</label>
+      <div class="password-field-wrap">
+        <input class="text-input" type="password" id="confirm_local_password" name="confirm_local_password" required minlength="16" autocomplete="new-password">
+        <button type="button" class="toggle-password" data-target="confirm_local_password">Показать</button>
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit">Изменить пароль локального администратора</button>
+</form>

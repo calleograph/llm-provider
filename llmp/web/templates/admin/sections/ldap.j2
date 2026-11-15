@@ -1,0 +1,253 @@
+{# Раздел «LDAP-подключения» (перенос public/admin/sections/ldap.php) #}
+{% macro field_error(errors, key) %}{% if key in errors %}<p class="field-error">{{ errors[key] }}</p>{% endif %}{% endmacro %}
+{% macro ldap_fields(domain) %}
+{% set errors = errors_for(domain) %}
+{% set suffix = domain.id() if domain else 'new' %}
+{% macro input(name, label, placeholder='', type='text', required=true) %}<div class="field"><label class="field-label" for="{{ name }}-{{ suffix }}">{{ label }}</label><input class="text-input{% if name in errors %} has-error{% endif %}" id="{{ name }}-{{ suffix }}" type="{{ type }}" name="{{ name }}" value="{{ value(domain, name, '636' if name == 'port' else ('8' if name == 'network_timeout' else '')) }}"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %}>{{ field_error(errors, name) }}</div>{% endmacro %}
+  <div class="form-row">
+    {{ input('name', 'Отображаемое название', 'Корпоративный домен') }}
+    {{ input('ldaps_url', 'LDAPS URL (LDAP endpoint)', 'ldaps://dc01.example.local:636/') }}
+  </div>
+  <div class="form-row">
+    {{ input('host', 'Контроллер домена (host)', 'dc01.example.local') }}
+    {{ input('port', 'Порт', '636', 'number') }}
+    <div class="field">
+      <label class="field-label" for="protocol_version-{{ suffix }}">Версия протокола LDAP</label>
+      <select class="text-input" id="protocol_version-{{ suffix }}" name="protocol_version">
+        <option value="3" {{ 'selected' if value(domain, 'protocol_version', '3') == '3' }}>3</option>
+        <option value="2" {{ 'selected' if value(domain, 'protocol_version', '3') == '2' }}>2</option>
+      </select>
+    </div>
+    {{ input('network_timeout', 'Таймаут сети (сек.)', '8', 'number') }}
+  </div>
+  <div class="form-row">
+    {{ input('base_dn', 'Base DN', 'DC=example,DC=local') }}
+    {{ input('domain', 'Домен (для UPN)', 'example.local') }}
+    {{ input('netbios_domain', 'NetBIOS домен', 'EXAMPLE', 'text', false) }}
+  </div>
+  <p class="muted">Admin group DN задаётся в разделе «Доступ к админ-панели». StartTLS выключен (ldaps:// уже зашифровано на транспортном уровне).</p>
+  <div class="form-row">
+    {{ input('service_username', 'Сервисная учётка для чата (sAMAccountName, read-only)', 'svc-llm-read', 'text', false) }}
+    <div class="field">
+      <label class="field-label" for="service_password-{{ suffix }}">Пароль сервисной учётки</label>
+      <div class="password-field-wrap">
+        <input class="text-input" type="password" id="service_password-{{ suffix }}" name="service_password" autocomplete="new-password"
+               placeholder="{{ 'сохранён — оставьте пустым, чтобы не менять' if domain and domain.has_service_password }}">
+        <button type="button" class="toggle-password" data-target="service_password-{{ suffix }}">Показать</button>
+      </div>
+{% if domain and domain.has_service_password %}
+      <label class="llm-inline-check"><input type="checkbox" name="clear_service_password" value="1"> удалить сохранённый пароль</label>
+{% endif %}
+      {{ field_error(errors, 'service_username') }}
+    </div>
+  </div>
+  <label class="switch">
+    <input type="checkbox" name="llm_enabled" value="1" {{ 'checked' if value(domain, 'llm_enabled', '1') == '1' }}>
+    <span class="track"></span> Разрешить вход в LLM-чат пользователям этого домена
+  </label>
+{% endmacro %}
+<p class="muted llm-lead">
+  LDAPS-подключения к домену Active Directory: используются и для входа администраторов (одно
+  «активное» подключение), и для входа пользователей в LLM-чат (можно включить сразу несколько
+  доменов). Сертификаты ниже — общий доверенный CA bundle для всех подключений сразу.
+</p>
+
+<div class="llm-toolbar">
+  <p class="section-title">Подключения</p>
+  <button type="button" class="btn btn-primary llm-plus" data-reveal="newLdapCard" title="Добавить подключение" aria-label="Добавить подключение"{{ ' hidden' if editing_id == 0 }}>+ Добавить подключение</button>
+</div>
+
+<div id="draftRestoreBanner" class="draft-banner" hidden>
+  <span>Найден несохранённый черновик этой формы (например, после случайного закрытия вкладки).</span>
+  <span>
+    <button type="button" class="btn btn-small draft-apply">Восстановить</button>
+    <button type="button" class="btn btn-small draft-discard">Отклонить</button>
+  </span>
+</div>
+
+<div class="llm-card" id="newLdapCard"{{ '' if editing_id == 0 else ' hidden' }}>
+  <div class="llm-card-head"><h2>Новое подключение</h2></div>
+  <form method="post" id="connectionForm" action="index.php?section=ldap&action=create_ldap">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {{ ldap_fields(none) }}
+    <div class="llm-actions"><button class="btn btn-primary" type="submit">Добавить подключение</button></div>
+  </form>
+</div>
+
+{% if not domains %}
+<p class="muted">Подключений пока нет — нажмите «+ Добавить подключение».</p>
+{% endif %}
+
+{% for domain in domains %}{% set id = domain.id() %}
+<div class="llm-card" id="ldap-{{ id }}">
+  <div class="llm-card-head">
+    <h2>{{ domain.config.name }} <span class="muted mono">{{ domain.config.host }}:{{ domain.config.port }}</span></h2>
+    <div>
+{% if domain.config.is_active %}
+      <span class="badge badge-active" title="Используется для входа администраторов">Активно для входа администраторов</span>
+{% else %}
+      <form method="post" action="index.php?section=ldap&action=set_active_ldap#ldap-{{ id }}" class="inline-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="id" value="{{ id }}">
+        <button class="btn btn-small" type="submit">Сделать активным для входа администраторов</button>
+      </form>
+{% endif %}
+      <span class="badge {{ 'badge-active' if domain.llm_enabled else 'badge-inactive' }}">Чат: {{ 'включён' if domain.llm_enabled else 'выключен' }}</span>
+      <span class="badge {{ 'badge-active' if domain.has_service_account() else 'badge-inactive' }}">Сервисная учётка: {{ 'задана' if domain.has_service_account() else 'нет' }}</span>
+    </div>
+  </div>
+
+  <form method="post" action="index.php?section=ldap&action=update_ldap#ldap-{{ id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ id }}">
+    {{ ldap_fields(domain) }}
+    <div class="llm-actions">
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+      <button class="btn" type="submit" form="testLdap{{ id }}">Проверить подключение</button>
+{% if not domain.config.is_active %}
+      <button class="btn btn-danger" type="submit" form="deleteLdap{{ id }}">Удалить</button>
+{% endif %}
+    </div>
+  </form>
+  <form id="testLdap{{ id }}" method="post" action="index.php?section=ldap&action=test_ldap#ldap-{{ id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ id }}">
+  </form>
+{% if not domain.config.is_active %}
+  <form id="deleteLdap{{ id }}" method="post" action="index.php?section=ldap&action=delete_ldap"
+        data-confirm-title="Удалить подключение?"
+        data-confirm-text="Подключение «{{ domain.config.name }}» и его разрешённые группы/пользователи будут удалены. История диалогов пользователей сохранится.">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ id }}">
+  </form>
+{% endif %}
+
+{% if id in test_results %}{% set test = test_results[id] %}
+  <div class="llm-table-wrap"><table class="data-table llm-result">
+    <thead><tr><th class="llm-col-icon"></th><th>Шаг проверки</th><th>Подробности</th></tr></thead>
+    <tbody>
+{% for step in test.steps %}
+      <tr>
+        <td><span class="status-dot {{ 'status-ok' if step.ok else 'status-bad' }}" role="img" aria-label="{{ 'Успешно' if step.ok else 'Ошибка' }}" title="{{ 'Успешно' if step.ok else 'Ошибка' }}"></span></td>
+        <td>{{ step.label }}</td>
+        <td class="muted">{{ step.detail }}</td>
+      </tr>
+{% endfor %}
+    </tbody>
+  </table></div>
+{% if not test.bind_tested %}
+  <p class="muted llm-note">Bind не проверялся — не задан ни тестовый логин, ни сервисная учётка.</p>
+{% endif %}
+{% endif %}
+</div>
+{% endfor %}
+
+<hr class="sep">
+
+<p class="section-title">Сертификаты (общий CA bundle для всех подключений)</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Тип</th><th>Subject</th><th>Issuer</th><th>Serial</th><th>SHA-256</th><th>Действует до</th><th></th></tr></thead>
+  <tbody>
+{% for cert in certificates %}{% set expiry = cert_expiry(cert.valid_to) %}
+    <tr>
+      <td>{{ 'Root CA' if cert.type == 'root' else 'Intermediate CA' }}</td>
+      <td class="mono cell-wrap">{{ cert.subject }}</td>
+      <td class="mono cell-wrap">{{ cert.issuer }}</td>
+      <td class="mono">{{ cert.serial }}</td>
+      <td class="mono cell-wrap">{{ cert.fingerprint_sha256 }}</td>
+      <td class="{{ 'expiry-warning' if expiry == 'expired' else ('status-warn' if expiry == 'soon' else '') }}">
+        {{ cert.valid_to }}
+{% if expiry == 'expired' %}
+        <br><span class="expiry-warning">— срок истёк</span>
+{% elif expiry == 'soon' %}
+        <br><span class="status-warn">— истекает менее чем через 30 дней</span>
+{% endif %}
+      </td>
+      <td>
+        <form method="post" action="index.php?section=ldap&action=delete_certificate"
+              data-confirm-title="Удалить сертификат?"
+              data-confirm-text="Сертификат будет удалён из доверенного CA bundle. Если это единственный сертификат или он входит в текущую цепочку доверия, LDAPS-подключения к AD перестанут проходить проверку TLS.">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="id" value="{{ cert.id | int }}">
+          <button class="btn btn-small btn-danger" type="submit">Удалить</button>
+        </form>
+      </td>
+    </tr>
+{% endfor %}
+{% if not certificates %}
+    <tr><td colspan="7" class="muted">Сертификаты пока не загружены. LDAPS-подключения будут отклонены (fail-closed), пока не будет загружен хотя бы Root CA.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+
+{% if pending %}
+<hr class="sep">
+<p class="section-title">Подтверждение загрузки сертификата</p>
+<div class="alert alert-warn">Проверьте параметры сертификата перед сохранением.</div>
+<dl class="kv">
+  <dt>Тип</dt><dd>{{ 'Root CA' if pending_type == 'root' else 'Intermediate CA' }}</dd>
+  <dt>Subject</dt><dd>{{ pending.subject }}</dd>
+  <dt>Issuer</dt><dd>{{ pending.issuer }}</dd>
+  <dt>Serial Number</dt><dd>{{ pending.serial }}</dd>
+  <dt>SHA-256 fingerprint</dt><dd>{{ pending.fingerprint_sha256 }}</dd>
+  <dt>Valid From</dt><dd>{{ pending.valid_from }}</dd>
+  <dt>Valid To</dt><dd>{{ pending.valid_to }}</dd>
+</dl>
+<form method="post" action="index.php?section=ldap&action=confirm_certificate" class="inline-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn btn-primary" type="submit">Подтвердить и сохранить</button>
+</form>
+<form method="post" action="index.php?section=ldap&action=cancel_certificate" class="inline-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn" type="submit">Отменить</button>
+</form>
+{% endif %}
+
+<hr class="sep">
+
+<p class="section-title">Загрузить новый сертификат</p>
+<form method="post" action="index.php?section=ldap&action=preview_certificate" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label">Тип сертификата</label>
+      <select class="text-input" name="cert_type">
+        <option value="root">Root CA</option>
+        <option value="intermediate">Intermediate CA</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label">Файл сертификата (PEM или DER)</label>
+      <input class="text-input" type="file" name="certificate" accept=".pem,.crt,.cer,.der" required>
+    </div>
+  </div>
+  <p class="muted">Приватные ключи не принимаются. Сертификат будет разобран и показан для подтверждения перед сохранением.</p>
+  <button class="btn" type="submit">Разобрать и просмотреть</button>
+</form>
+
+<hr class="sep">
+
+<p class="section-title">Или вставить сертификат текстом (PEM)</p>
+<form method="post" action="index.php?section=ldap&action=preview_certificate_pem">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label">Тип сертификата</label>
+      <select class="text-input" name="cert_type">
+        <option value="root">Root CA</option>
+        <option value="intermediate">Intermediate CA</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label">Содержимое сертификата (-----BEGIN CERTIFICATE-----…)</label>
+      <textarea class="text-input cert-pem-input" name="certificate_pem" rows="10" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+    </div>
+  </div>
+  <p class="muted">
+    Только сам сертификат (PEM, base64 между BEGIN/END CERTIFICATE). Приватные ключи
+    и другие данные не принимаются — проходит ту же проверку OpenSSL, что и файл.
+  </p>
+  <button class="btn" type="submit">Разобрать и просмотреть</button>
+</form>

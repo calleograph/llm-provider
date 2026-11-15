@@ -1,0 +1,134 @@
+{# Раздел «Модели и резервирование» (HTML-часть llm_models.php) #}
+{% macro err(k) %}{% if k in field_errors %}<p class="field-error">{{ field_errors[k] }}</p>{% endif %}{% endmacro %}
+{% set edit_id = (editing.id if editing is not none and editing.id is not none else 0)|int %}
+<p class="muted llm-lead">
+  Провайдер — подключение (адрес, тип API, ключ); модель — то, что выбирает сотрудник. У провайдера может быть несколько моделей.
+  Если модель не ответила (перегрузка, HTTP 429/5xx, таймаут, обрыв, пустой ответ при HTTP 200, ответ не по формату), запрос автоматически
+  уходит следующей модели цепочки — только той, к которой у сотрудника есть доступ. Повторы ограничены, Retry-After учитывается,
+  проблемная модель ставится на паузу. Сотрудник видит понятное сообщение, здесь — техническая причина.
+</p>
+
+<form method="post" action="index.php?section=llm_models&action=save_fallback_settings" class="llm-switch-row">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="switch"><input type="checkbox" name="fallback_auto" value="1" {{ 'checked' if fallback_auto == '1' else '' }} data-autosubmit><span class="track"></span>
+    После резервных моделей пробовать остальные доступные сотруднику модели по приоритету</label>
+</form>
+
+<div class="llm-table-wrap">
+<table class="data-table models-table">
+  <thead><tr><th>Модель</th><th>Состояние</th><th>Запросы</th><th>Время</th><th>Токены</th><th>Резерв</th><th class="models-actions-col">Действия</th></tr></thead>
+  <tbody>
+{% if not rows %}
+    <tr><td colspan="7" class="muted">Моделей нет — добавьте подключение в разделе «Подключения LLM API».</td></tr>
+{% endif %}
+{% for row in rows %}
+{% set m = row.m %}{% set h = row.h %}
+    <tr>
+      <td><strong>{{ m.display_name }}</strong>{% if m.is_default %} <span class="badge">по умолчанию</span>{% endif %}
+
+        <div class="muted mono">{{ m.provider_name }} · {{ m.model }}</div>
+        <div class="muted">окно {{ num(m.context_window) }} · ответ до {{ num(m.max_output_tokens) }} · приоритет {{ m.priority }}</div></td>
+      <td><span class="{{ row.state[1] }}">{{ row.state[0] }}</span>
+        <div class="muted">успех: {{ when(h.last_success_at) }}</div>
+        {% if h.last_error_at %}<div class="muted">ошибка: {{ when(h.last_error_at) }} · {{ h.last_error_message or '' }}</div>{% endif %}</td>
+      <td>{{ num(row.ok) }} успешно<div class="muted">{{ num(row.errs) }} ошибок · {{ num(h.empty_count or 0) }} пустых · {{ num(h.fallback_count or 0) }} переключений</div></td>
+      <td>{{ (num((h.total_ms|int) / [1, row.ok]|max) ~ ' мс') if row.ok > 0 else '—' }}<div class="muted">последний {{ (num(h.last_ms|int) ~ ' мс') if h.last_ms is defined and h.last_ms is not none else '—' }}</div></td>
+      <td>{{ num(h.tokens_in or 0) }} / {{ num(h.tokens_out or 0) }}{% if (h.cost or 0)|float > 0 %}<div class="muted">{{ num(h.cost, 2) }}</div>{% endif %}</td>
+      <td>{% if not m.fallback_ids %}<span class="muted">—</span>{% else %}{{ row.fallbacks }}{% endif %}</td>
+      <td class="models-actions">
+        <form method="post" action="index.php?section=llm_models&action=check_model"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ m.id }}"><button class="btn btn-small" type="submit">Проверить</button></form>
+        <form method="post" action="index.php?section=llm_models&action=generate_model"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ m.id }}"><button class="btn btn-small" type="submit">Тест генерации</button></form>
+        <a class="btn btn-small btn-ghost" href="index.php?section=llm_models&edit={{ m.id }}#model-form">Изменить</a>
+        {% if row.cool %}<form method="post" action="index.php?section=llm_models&action=reset_cooldown"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ m.id }}"><button class="btn btn-small btn-ghost" type="submit">Снять паузу</button></form>{% endif %}
+
+      </td>
+    </tr>
+{% if m.id in check_results %}{% set r = check_results[m.id] %}
+    <tr><td colspan="7"><div class="alert {{ 'alert-success' if r.ok else 'alert-error' }}">{{ r.message }} ({{ r.duration_ms|int }} мс){% if r.preview is not none %}<div class="muted">{{ r.preview }}</div>{% endif %}</div></td></tr>
+{% endif %}
+{% endfor %}
+  </tbody>
+</table>
+</div>
+
+<hr class="sep">
+{% if providers %}
+<p class="section-title" id="model-form">{{ 'Изменить модель' if edit_id > 0 else 'Добавить модель' }}</p>
+<form method="post" action="index.php?section=llm_models&action=save_model#model-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="id" value="{{ edit_id }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="provider_id">Подключение</label>
+      <select class="text-input" id="provider_id" name="provider_id" {{ 'disabled' if edit_id > 0 else '' }}>
+{% for p in providers %}
+        <option value="{{ p.id }}" {{ 'selected' if f('provider_id', 0)|int == p.id|int else '' }}>{{ p.name }}</option>
+{% endfor %}
+      </select>
+      {{ err('provider_id') }}
+    </div>
+    <div class="field"><label class="field-label" for="m_model">Идентификатор у провайдера</label>
+      <input class="text-input mono" id="m_model" name="model" required value="{{ f('model') }}" placeholder="openai/gpt-4o-mini">{{ err('model') }}</div>
+    <div class="field"><label class="field-label" for="m_name">Название для сотрудников</label>
+      <input class="text-input" id="m_name" name="display_name" required value="{{ f('display_name') }}" placeholder="Быстрая">{{ err('display_name') }}</div>
+  </div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="m_ctx">Контекстное окно, токенов</label>
+      <input class="text-input" type="number" id="m_ctx" name="context_window" value="{{ f('context_window', 32000) }}">{{ err('context_window') }}</div>
+    <div class="field"><label class="field-label" for="m_out">Макс. длина ответа, токенов</label>
+      <input class="text-input" type="number" id="m_out" name="max_output_tokens" value="{{ f('max_output_tokens', 2048) }}">{{ err('max_output_tokens') }}</div>
+    <div class="field"><label class="field-label" for="m_temp">Температура (пусто — по умолчанию)</label>
+      <input class="text-input" id="m_temp" name="temperature" inputmode="decimal" value="{{ f('temperature') }}" placeholder="0.3">{{ err('temperature') }}</div>
+    <div class="field"><label class="field-label" for="m_prio">Приоритет (меньше — раньше)</label>
+      <input class="text-input" type="number" id="m_prio" name="priority" value="{{ f('priority', 100) }}">{{ err('priority') }}</div>
+  </div>
+  <div class="form-row">
+    <div class="field"><label class="field-label" for="m_pin">Цена входа за 1 млн токенов</label>
+      <input class="text-input" id="m_pin" name="price_in" inputmode="decimal" value="{{ f('price_in') }}">{{ err('price_in') }}</div>
+    <div class="field"><label class="field-label" for="m_pout">Цена ответа за 1 млн токенов</label>
+      <input class="text-input" id="m_pout" name="price_out" inputmode="decimal" value="{{ f('price_out') }}">{{ err('price_out') }}</div>
+    <div class="field"><label class="field-label" for="m_fb">Резервные модели — по порядку (Ctrl+клик)</label>
+      <select class="text-input models-fallback" id="m_fb" name="fallback_ids[]" multiple size="4">
+{% set selected_fb = (editing.fallback_ids if editing is not none and editing.fallback_ids is not none else []) %}
+{% for m in all_models if m.id != edit_id %}
+        <option value="{{ m.id }}" {{ 'selected' if m.id in selected_fb else '' }}>{{ m.display_name ~ ' · ' ~ m.provider_name }}</option>
+{% endfor %}
+      </select></div>
+  </div>
+  <div class="llm-switch-row">
+    <label class="switch"><input type="checkbox" name="is_enabled" value="1" {{ 'checked' if (editing is none or editing.is_enabled is none or editing.is_enabled) else '' }}><span class="track"></span> Доступна сотрудникам</label>
+    <label class="switch"><input type="checkbox" name="supports_streaming" value="1" {{ 'checked' if (editing is none or editing.supports_streaming is none or editing.supports_streaming) else '' }}><span class="track"></span> Поддерживает потоковую выдачу</label>
+    <label class="switch"><input type="checkbox" name="supports_json" value="1" {{ 'checked' if editing is not none and editing.supports_json else '' }}><span class="track"></span> Поддерживает JSON-ответ</label>
+  </div>
+  <div class="llm-actions">
+    <button class="btn btn-primary" type="submit">Сохранить модель</button>
+    {% if editing is not none %}<a class="btn btn-ghost" href="index.php?section=llm_models">Отмена</a>{% endif %}
+
+  </div>
+</form>
+{% else %}
+<p class="muted">Сначала добавьте подключение в разделе <a href="index.php?section=llm_providers">«Подключения LLM API»</a> — модель создаётся для подключения.</p>
+{% endif %}
+{% if editing is not none and edit_id > 0 and not editing.is_default %}
+<form method="post" action="index.php?section=llm_models&action=delete_model" data-confirm="Удалить модель? Она исчезнет и из цепочек резервирования.">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ editing.id|int }}">
+  <button class="btn btn-small btn-danger" type="submit">Удалить модель</button>
+</form>
+{% endif %}
+
+<hr class="sep">
+<p class="section-title">Журнал проблемных моделей</p>
+<div class="llm-table-wrap">
+<table class="data-table">
+  <thead><tr><th>Когда (UTC)</th><th>Модель</th><th>Причина</th><th>HTTP</th><th>Действие</th></tr></thead>
+  <tbody>
+{% if not incidents %}<tr><td colspan="5" class="muted">Сбоев не было.</td></tr>{% endif %}
+{% for i in incidents %}
+    <tr><td>{{ when(i.created_at) }}</td><td>{{ i.model_name if i.model_name is not none else '—' }}</td>
+      <td><span class="mono">{{ i.code }}</span><div class="muted">{{ i.message }}</div></td>
+      <td>{{ i.http_status|int if i.http_status is not none else '—' }}</td>
+      <td>{{ i.action_label }}</td></tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>

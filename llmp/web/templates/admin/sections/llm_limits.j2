@@ -1,0 +1,93 @@
+{# Раздел «Категории лимитов» (перенос public/admin/sections/llm_limits.php) #}
+{% macro category_fields(card_id) %}
+{% set errors = errors_for(card_id) %}
+{% set sfx = 'new' if card_id == 0 else card_id %}
+{% set period = val(card_id, 'period', 'day') %}
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="name-{{ sfx }}">Название</label>
+      <input class="text-input{{ ' has-error' if 'name' in errors }}" id="name-{{ sfx }}" name="name" required maxlength="80" value="{{ val(card_id, 'name') }}" placeholder="Базовый">
+      {% if 'name' in errors %}<p class="field-error">{{ errors.name }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label class="field-label" for="period-{{ sfx }}">Период</label>
+      <select class="text-input{{ ' has-error' if 'period' in errors }}" id="period-{{ sfx }}" name="period">
+{% for value, label in period_labels.items() %}
+        <option value="{{ value }}" {{ 'selected' if period == value }}>{{ label }}</option>
+{% endfor %}
+      </select>
+      {% if 'period' in errors %}<p class="field-error">{{ errors.period }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label class="field-label" for="tokens-{{ sfx }}">Токенов за период</label>
+      <input class="text-input{{ ' has-error' if 'tokens' in errors }}" type="number" min="0" id="tokens-{{ sfx }}" name="tokens" value="{{ val(card_id, 'tokens', '50000') }}">
+      {% if 'tokens' in errors %}<p class="field-error">{{ errors.tokens }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label class="field-label" for="storage_mb-{{ sfx }}">Квота хранения (МБ)</label>
+      <input class="text-input{{ ' has-error' if 'storage_mb' in errors }}" type="number" min="0" id="storage_mb-{{ sfx }}" name="storage_mb" data-storage-input
+             value="{{ val(card_id, 'storage_mb', '50') }}" {{ 'disabled' if val(card_id, 'unlimited_storage') == '1' }}>
+      <label class="llm-inline-check"><input type="checkbox" name="unlimited_storage" value="1" data-storage-unlimited {{ 'checked' if val(card_id, 'unlimited_storage') == '1' }}> Без ограничения</label>
+      {% if 'storage_mb' in errors %}<p class="field-error">{{ errors.storage_mb }}</p>{% endif %}
+    </div>
+  </div>
+  <p class="muted llm-note">
+    Квота хранения считается по обезличенному тексту в базе (сообщения всех чатов + источники всех проектов
+    пользователя), а не по загруженным файлам — исходные файлы на сервере не хранятся, они обрабатываются во
+    временном каталоге и удаляются сразу после обезличивания.
+  </p>
+  <label class="llm-inline-check"><input type="checkbox" name="is_default" value="1" {{ 'checked' if val(card_id, 'is_default') == '1' }}> Категория по умолчанию для новых пользователей чата</label>
+{% endmacro %}
+<p class="muted llm-lead">
+  Именованные категории лимита токенов и хранения («Базовый», «Расширенный»...) — назначаются пользователю
+  чата индивидуально (раздел «Пользователи чата») или доменной группе (раздел «Доступ к чату»). Пользователь
+  без персональной категории получает самую щедрую категорию среди своих групп; если ни группа, ни он сам
+  не имеют категории — применяется категория по умолчанию. Расход токенов не переносится на следующий период.
+</p>
+
+<div class="llm-toolbar">
+  <p class="section-title">Категории ({{ rows | length }})</p>
+  <button type="button" class="btn btn-primary llm-plus" data-reveal="newCategoryCard"{{ ' hidden' if form_category_id == 0 }}>+ Добавить категорию</button>
+</div>
+
+<div class="llm-card" id="newCategoryCard"{{ '' if form_category_id == 0 else ' hidden' }}>
+  <div class="llm-card-head"><h2>Новая категория</h2></div>
+  <form method="post" action="index.php?section=llm_limits&action=create_category">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {{ category_fields(0) }}
+    <div class="llm-actions"><button class="btn btn-primary" type="submit">Добавить</button></div>
+  </form>
+</div>
+
+{% if not rows %}
+<p class="muted">Категорий пока нет — нажмите «+ Добавить категорию». Пока их нет, действуют общие параметры лимита из раздела «Пользователи чата».</p>
+{% endif %}
+
+{% for row in rows %}{% set cid = row.id %}
+<div class="llm-card" id="category-{{ cid }}">
+  <div class="llm-card-head">
+    <h2>{{ row.name }}</h2>
+    {% if row.is_default %}<span class="badge badge-active">По умолчанию</span>{% endif %}
+  </div>
+  <form method="post" action="index.php?section=llm_limits&action=update_category#category-{{ cid }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="id" value="{{ cid }}">
+    {{ category_fields(cid) }}
+    <div class="llm-actions">
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+{% if row.is_default %}
+      <span class="muted llm-note" title="Сначала сделайте по умолчанию другую категорию">Категория по умолчанию — удаление недоступно</span>
+{% else %}
+      <button class="btn btn-danger" type="submit" form="deleteCategory{{ cid }}">Удалить</button>
+{% endif %}
+    </div>
+  </form>
+{% if not row.is_default %}
+  <form id="deleteCategory{{ cid }}" method="post" action="index.php?section=llm_limits&action=delete_category"
+        data-confirm-title="Удалить категорию?"
+        data-confirm-text="Пользователи и группы, использующие категорию «{{ row.name }}», вернутся к категории по умолчанию.">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ cid }}">
+  </form>
+{% endif %}
+</div>
+{% endfor %}

@@ -188,9 +188,13 @@
 
   /* ---------- контекстное меню ---------- */
 
-  function closeMenu() {
+  var menuAnchor = null;
+  function closeMenu(restoreFocus) {
+    if (els.menu.hidden) return;
     els.menu.hidden = true;
     els.menu.textContent = '';
+    if (restoreFocus === true && menuAnchor && document.contains(menuAnchor)) menuAnchor.focus();
+    menuAnchor = null;
   }
 
   function openMenu(anchor, items) {
@@ -202,6 +206,7 @@
       }
       var button = el('button', 'gpt-menu-item' + (item.danger ? ' danger' : '') + (item.active ? ' active' : ''), item.label);
       button.type = 'button';
+      button.setAttribute('role', 'menuitem');
       button.addEventListener('click', function (e) {
         e.stopPropagation();
         item.action(button);
@@ -214,13 +219,32 @@
     var left = Math.min(rect.left, window.innerWidth - els.menu.offsetWidth - 8);
     els.menu.style.top = Math.max(8, top) + 'px';
     els.menu.style.left = Math.max(8, left) + 'px';
+    menuAnchor = anchor;
+    var first = els.menu.querySelector('.gpt-menu-item');
+    if (first) first.focus({ preventScroll: true });
   }
+
+  // Клавиатура в меню: стрелки, Home/End, Tab закрывает меню.
+  els.menu.addEventListener('keydown', function (e) {
+    var items = Array.prototype.slice.call(els.menu.querySelectorAll('.gpt-menu-item'));
+    var i = items.indexOf(document.activeElement);
+    var next = null;
+    if (e.key === 'ArrowDown') next = items[(i + 1) % items.length];
+    else if (e.key === 'ArrowUp') next = items[(i - 1 + items.length) % items.length];
+    else if (e.key === 'Home') next = items[0];
+    else if (e.key === 'End') next = items[items.length - 1];
+    else if (e.key === 'Tab') { closeMenu(true); return; }
+    if (next) { e.preventDefault(); next.focus(); }
+  });
 
   document.addEventListener('click', function (e) {
     if (!els.menu.hidden && !els.menu.contains(e.target)) closeMenu();
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeMenu();
+    if (e.key !== 'Escape') return;
+    if (!els.menu.hidden) { closeMenu(true); return; }
+    // мобильная боковая панель закрывается так же, как меню
+    if (mobile.matches && !app.classList.contains('sidebar-closed')) { setSidebar(false); $('sidebarOpen').focus(); }
   });
 
   function confirmThen(button, label, action) {
@@ -284,7 +308,8 @@
     if (snippet) open.appendChild(el('span', 'gpt-item-snippet', snippet));
     open.title = conversation.title;
     open.addEventListener('click', function () { openConversation(conversation.id); });
-    var more = el('button', 'gpt-item-more', '⋯');
+    var more = el('button', 'gpt-item-more');
+    more.appendChild(moreIcon());
     more.type = 'button';
     more.title = 'Действия';
     more.setAttribute('aria-label', 'Действия с чатом');
@@ -321,6 +346,20 @@
 
     renderProjects();
     if (state.projectData) renderProjectChats();
+  }
+
+  // Три точки «Действия» — рисованная иконка вместо символа ⋯ (одна толщина линий с остальным набором).
+  function moreIcon() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    [5, 12, 19].forEach(function (x) {
+      var c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', '12'); c.setAttribute('r', '1.5');
+      svg.appendChild(c);
+    });
+    return svg;
   }
 
   function folderIcon() {
@@ -439,7 +478,8 @@
       open.addEventListener('click', function () { toggleProjectExpanded(project.id); });
       var projectChats = state.conversations.filter(function (c) { return c.project_id === project.id; });
       if (projectChats.length > 0) item.appendChild(el('span', 'gpt-item-count', String(projectChats.length)));
-      var more = el('button', 'gpt-item-more', '⋯');
+      var more = el('button', 'gpt-item-more');
+      more.appendChild(moreIcon());
       more.type = 'button';
       more.title = 'Действия';
       more.setAttribute('aria-label', 'Действия с проектом');
@@ -617,7 +657,8 @@
    * ответов LLM; полный CommonMark не требуется.
    */
   function renderInline(container, text) {
-    var pattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s()]+)\)|(\*\*|__)([^\n]+?)\3|(`+)([^\n]+?)\5|(\*|_)([^\n]+?)\7/;
+    // Последняя альтернатива — метка обезличивания вида «[телефон 1]», «[адрес]», «[IP 2]»: только оформление, текст не меняется.
+    var pattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s()]+)\)|(\*\*|__)([^\n]+?)\3|(`+)([^\n]+?)\5|(\*|_)([^\n]+?)\7|\[((?:IP|[а-яё][а-яё-]*)(?: [А-ЯЁа-яё-]+)?(?: \d{1,4})?)\](?!\()/;
     var rest = String(text || '');
     while (rest !== '') {
       var m = pattern.exec(rest);
@@ -642,6 +683,10 @@
         var em = el('em');
         renderInline(em, m[8]);
         container.appendChild(em);
+      } else if (m[9] !== undefined) {
+        var mask = el('span', 'gpt-mask', m[0]);
+        mask.title = 'Обезличенные данные: исходное значение не покидало сервер компании';
+        container.appendChild(mask);
       }
       rest = rest.slice(m.index + m[0].length);
     }
@@ -771,7 +816,7 @@
     options = options || {};
     els.empty.hidden = true;
     var role = message.role === 'user' ? 'user' : (message.role === 'error' ? 'error' : 'assistant');
-    var wrap = el('div', 'gpt-msg gpt-msg-' + role);
+    var wrap = el('div', 'gpt-msg gpt-msg-' + role + (options.pending ? ' is-pending' : ''));
 
     var saved = message.context_report;
     if (typeof saved === 'string') { try { saved = JSON.parse(saved); } catch (e) { saved = null; } }
@@ -803,7 +848,6 @@
     if (message.code === 'storage_quota_exceeded') {
       var goToCleanup = el('button', 'btn btn-small btn-primary', 'Управление данными');
       goToCleanup.type = 'button';
-      goToCleanup.style.marginTop = '8px';
       goToCleanup.addEventListener('click', openDataManager);
       wrap.appendChild(goToCleanup);
     }
@@ -812,7 +856,7 @@
     }
     if (role === 'user') {
       var noteText = options.pending
-        ? (options.skipAnonymization ? 'Отправка без обезличивания…' : 'Обезличивание и отправка…')
+        ? (options.skipAnonymization ? 'Отправка без обезличивания…' : 'Отправка…')
         : (message.unanonymized ? 'Отправлено без обезличивания' : 'Отправлено в обезличенном виде');
       var note = el('div', 'gpt-msg-note' + (message.unanonymized || options.skipAnonymization ? ' gpt-msg-note-danger' : ''), noteText);
       wrap.appendChild(note);
@@ -904,9 +948,17 @@
     els.emptyTitle.textContent = projectId ? 'Новый чат в проекте «' + ((projectById(projectId) || {}).name || '') + '»' : 'Чем помочь?';
     els.input.placeholder = projectId ? 'Новый чат в этом проекте' : 'Спросите что-нибудь';
     setHeader('', projectId);
+    selectProjectModel(projectId);
     renderLists();
     els.input.focus();
     closeSidebarOnMobile();
+  }
+
+  // Новый чат в проекте — модель из настроек проекта (если она есть в списке).
+  function selectProjectModel(projectId) {
+    var id = projectId && (projectById(projectId) || {}).model_id;
+    var option = id && els.model && els.model.tagName === 'SELECT' && els.model.querySelector('option[value$=":' + id + '"]');
+    if (option) els.model.value = option.value;
   }
 
   // Значение списка — «провайдер:модель». Диалог восстанавливает свою модель (или модель провайдера по умолчанию).
@@ -979,9 +1031,8 @@
       els.title.textContent = data.project.name;
       renderInstructions();
       renderSources();
-      $('projectDescription').value = data.project.description || '';
-      $('projectDescriptionStatus').textContent = '';
-      $('projectState').textContent = data.project.state || 'Пока пусто — появится после нескольких сообщений в чатах проекта.';
+      renderProjectForms();
+      selectProjectModel(id);
       renderLists();
       switchProjectTab('chats');
       els.input.placeholder = 'Новый чат в этом проекте';
@@ -1000,7 +1051,7 @@
       var toggle = el('button', 'gpt-source-toggle');
       toggle.type = 'button';
       toggle.title = 'Показать обезличенный текст';
-      toggle.setAttribute('aria-label', 'Показать обезличенный текст источника');
+      toggle.setAttribute('aria-label', 'Показать обезличенный текст материала');
       toggle.appendChild(chevronIcon());
       row.appendChild(toggle);
       row.appendChild(el('span', 'gpt-source-type', source.file_type ? source.file_type.toUpperCase() : 'ТЕКСТ'));
@@ -1008,7 +1059,7 @@
       row.appendChild(el('span', 'gpt-source-size', formatNumber(source.chars) + ' симв.'));
       var remove = el('button', 'gpt-item-more', '×');
       remove.type = 'button';
-      remove.title = 'Удалить источник';
+      remove.title = 'Удалить материал';
       remove.addEventListener('click', function (e) {
         e.stopPropagation();
         if (remove.getAttribute('data-confirm') !== '1') {
@@ -1051,7 +1102,7 @@
       els.sourceList.appendChild(wrap);
     });
     if (!data.sources || data.sources.length === 0) {
-      els.sourceList.appendChild(el('p', 'gpt-side-empty', 'Источников пока нет'));
+      els.sourceList.appendChild(el('p', 'gpt-side-empty', 'Материалов пока нет'));
     }
     var fileCount = data.sources ? data.sources.length : 0;
     var maxFiles = data.sources_max_files || 0;
@@ -1071,11 +1122,9 @@
   }
 
   /*
-   * Вкладки вида проекта (Чаты / Инструкции / Источники) — раньше
-   * "Инструкции" и "Источники" были развёрнуты одновременно рядом, а
-   * "Чаты проекта" уезжали вниз за пределы видимой без прокрутки области.
-   * Все три панели уже загружены разом (openProject()), переключение —
-   * чисто визуальное, без новых запросов.
+   * Вкладки вида проекта (Чаты / Инструкции / Материалы / Память / Настройки).
+   * Все панели загружены разом (openProject()), переключение — чисто
+   * визуальное, без новых запросов.
    */
   function switchProjectTab(name) {
     document.querySelectorAll('.gpt-project-tab').forEach(function (tab) {
@@ -1250,7 +1299,7 @@
   $('sourceAdd').addEventListener('click', function () {
     var file = els.sourceFile.files && els.sourceFile.files[0];
     if (!file && els.sourceText.value.trim() === '') {
-      toast('Вставьте текст источника или приложите файл.');
+      toast('Вставьте текст материала или приложите файл.');
       return;
     }
     if (file && file.size > maxUploadBytes) {
@@ -1271,7 +1320,7 @@
       renderSources();
     }).catch(function (error) { toast(error.message); }).finally(function () {
       button.disabled = false;
-      button.textContent = 'Добавить источник';
+      button.textContent = 'Добавить материал';
     });
   });
 
@@ -1354,7 +1403,7 @@
       checkbox.value = String(c.id);
       checkbox.addEventListener('change', updateDeleteSelectedState);
       row.appendChild(checkbox);
-      row.appendChild(el('span', 'gpt-data-row-title', c.title + (c.pinned ? ' 📌' : '')));
+      row.appendChild(el('span', 'gpt-data-row-title', c.title + (c.pinned ? ' · закреплён' : '')));
       row.appendChild(el('span', 'gpt-data-row-meta', formatDate(c.updated_at.slice(0, 10))));
       els.dataChatsList.appendChild(row);
     });
@@ -1524,6 +1573,38 @@
     els.input.style.height = Math.min(els.input.scrollHeight, window.innerHeight * 0.4) + 'px';
   }
 
+  /*
+   * Этапы отправки в строке под сообщением (место под неё уже есть — без сдвига вёрстки). Сервер отвечает одним JSON,
+   * поэтому этап оценивается по времени; быстрый путь (< 300 мс) ничего не показывает и не мигает.
+   */
+  function pendingStages(node, chars, files, skipAnon) {
+    var note = node.querySelector('.gpt-msg-note');
+    if (!note) return function () {};
+    note.setAttribute('role', 'status');
+    // ≈ 13 000 знаков/с у сервиса обезличивания (docs/ANONYMIZATION.md, «Скорость»); объём вложения заранее неизвестен — с запасом.
+    var sent = Math.max(900, 300 + chars / 13 + files * 1500);
+    var stages = [[300, skipAnon ? 'Проверка на пароли и ключи…' : 'Обезличивание…'], [sent, 'Отправлено в нейросеть…'], [sent + 1500, 'Модель отвечает…']];
+    var started = Date.now();
+    var seconds = null;
+    var timers = stages.map(function (stage) {
+      return setTimeout(function () {
+        note.textContent = '';
+        note.appendChild(el('span', 'gpt-stage', stage[1]));
+        seconds = el('span', 'gpt-stage-time');
+        seconds.setAttribute('aria-hidden', 'true');
+        note.appendChild(seconds);
+      }, stage[0]);
+    });
+    var tick = setInterval(function () {
+      var s = Math.floor((Date.now() - started) / 1000);
+      if (seconds && s >= 5) seconds.textContent = s + ' с';
+    }, 1000);
+    return function () {
+      timers.forEach(clearTimeout);
+      clearInterval(tick);
+    };
+  }
+
   function send() {
     if (state.sending || !ready) return;
     if (dictation && ['starting', 'listening', 'finishing'].indexOf(dictation.phase) >= 0) {
@@ -1562,6 +1643,7 @@
       attachment_size: state.files.length ? state.files.reduce(function (sum, f) { return sum + f.size; }, 0) : null
     }, { pending: true, skipAnonymization: skipAnonymization });
     setSending(true);
+    var stopStages = pendingStages(pending, text.length, state.files.length, skipAnonymization);
 
     request('POST', 'send', body).then(function (data) {
       pending.remove();
@@ -1592,6 +1674,7 @@
       if (fromProjectView) setHeader('', state.currentProjectId);
       toast(error.message, error.code);
     }).finally(function () {
+      stopStages();
       setSending(false);
       els.input.placeholder = 'Спросите что-нибудь';
       els.input.focus();
@@ -1646,7 +1729,7 @@
     var files = Array.prototype.slice.call(fileList || []);
     if (files.length === 0) return;
     if (files.length > MAX_FILES) {
-      showStatusToast('Можно добавить не более ' + MAX_FILES + ' источников за раз — остальные ' + (files.length - MAX_FILES) + ' пропущены.');
+      showStatusToast('Можно добавить не более ' + MAX_FILES + ' материалов за раз — остальные ' + (files.length - MAX_FILES) + ' пропущены.');
       files = files.slice(0, MAX_FILES);
     }
 
@@ -1658,12 +1741,12 @@
     function addNext() {
       if (files.length === 0) {
         if (failed.length > 0) {
-          showStatusToast('Добавлено источников: ' + done + ' из ' + total + '. Не удалось: ' + failed.join(', ') + '.', 'error');
+          showStatusToast('Добавлено материалов: ' + done + ' из ' + total + '. Не удалось: ' + failed.join(', ') + '.', 'error');
         } else if (total > 1) {
-          showStatusToast('Добавлено источников: ' + done + '.');
+          showStatusToast('Добавлено материалов: ' + done + '.');
         }
         addButton.disabled = false;
-        addButton.textContent = 'Добавить источник';
+        addButton.textContent = 'Добавить материал';
         return;
       }
       var file = files.shift();
@@ -1714,8 +1797,8 @@
     var used = (r.input_tokens || r.total || 0);
     details.appendChild(el('summary', null, 'Контекст ' + formatNumber(used) + ' из ' + formatNumber(r.window || 0) + ' токенов' + (r.output_tokens ? ' · ответ ' + formatNumber(r.output_tokens) : '')));
     var parts = [
-      ['Инструкции', r.instructions], ['Сводка и состояние проекта', r.summary],
-      ['Источники', r.sources, r.sources_total && r.sources < r.sources_total ? 'из ' + formatNumber(r.sources_total) + ' — переданы подходящие фрагменты' : ''],
+      ['Инструкции', r.instructions], ['Сводка диалога', r.summary], ['Память проекта', r.memory],
+      ['Материалы проекта', r.sources, r.sources_total && r.sources < r.sources_total ? 'из ' + formatNumber(r.sources_total) + ' — переданы подходящие фрагменты' : ''],
       ['История', r.history, (r.history_messages || 0) + ' сообщ.' + (r.history_dropped ? ', ранние ' + r.history_dropped + ' — в сводке или не переданы' : '')],
       ['Текущее сообщение', r.current], ['Резерв под ответ', r.reserve]
     ];
@@ -1764,13 +1847,129 @@
   }
   $('answerSettingsOpen').addEventListener('click', openAnswerSettings);
   $('answerSettingsSave').addEventListener('click', saveAnswerSettings);
-  $('projectDescriptionSave').addEventListener('click', function () {
-    var status = $('projectDescriptionStatus');
-    status.textContent = 'Обезличиваем и сохраняем…';
-    request('POST', 'project_update', form({ id: state.currentProjectId, description: $('projectDescription').value })).then(function (r) {
+  /* ---------- проект: инструкции, память, настройки ---------- */
+
+  function projectStatus(id, text) { $(id).textContent = text; }
+
+  function renderProjectForms() {
+    var data = state.projectData;
+    var project = data.project;
+    var settings = project.settings || {};
+    $('projectDescription').value = project.description || '';
+    $('projectInstructions').value = project.instructions || '';
+    $('projectInstructionsMeta').textContent = project.instructions ? formatNumber(project.instructions.length) + ' симв.' : '';
+    $('projectMemory').value = project.state || '';
+    $('projectMemoryMeta').textContent = formatNumber((project.state || '').length) + ' / ' + formatNumber(data.memory_limit) + ' симв.' +
+      (project.state_updated_at ? ' · обновлена ' + new Date(project.state_updated_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '');
+    $('projectMemoryOff').hidden = settings.use_memory !== false;
+    ['projectInstructionsStatus', 'projectMemoryStatus', 'projectSettingsStatus'].forEach(function (id) { projectStatus(id, ''); });
+
+    var model = $('projectModel');
+    model.textContent = '';
+    var same = el('option', null, 'Как выбрано в чате');
+    same.value = '0';
+    model.appendChild(same);
+    if (els.model && els.model.tagName === 'SELECT') {
+      Array.prototype.forEach.call(els.model.options, function (o) {
+        var option = el('option', null, o.textContent);
+        option.value = o.value.split(':')[1];
+        model.appendChild(option);
+      });
+    }
+    model.value = String(settings.model_id || 0);
+    if (model.selectedIndex < 0) model.value = '0';
+    var style = $('projectStyle');
+    style.textContent = '';
+    var def = el('option', null, 'По умолчанию');
+    def.value = '';
+    style.appendChild(def);
+    Object.keys(styles).forEach(function (k) { var o = el('option', null, styles[k]); o.value = k; style.appendChild(o); });
+    style.value = settings.style || '';
+    $('projectShare').value = String(settings.sources_share || 40);
+    $('projectUseSources').checked = settings.use_sources !== false;
+    $('projectUseMemory').checked = settings.use_memory !== false;
+    renderProjectBudget();
+  }
+
+  // Оценка токенов проекта в каждом запросе относительно окна модели (выбранной в проекте или в чате).
+  function renderProjectBudget() {
+    var data = state.projectData;
+    var t = data.context_tokens || {};
+    var modelId = $('projectModel').value;
+    var option = els.model && els.model.tagName === 'SELECT'
+      ? (modelId !== '0' && els.model.querySelector('option[value$=":' + modelId + '"]')) || els.model.options[els.model.selectedIndex]
+      : null;
+    var windowTokens = option ? Number(option.getAttribute('data-window')) || 0 : 0;
+    var useMemory = $('projectUseMemory').checked, useSources = $('projectUseSources').checked;
+    var total = (t.instructions || 0) + (useMemory ? t.memory || 0 : 0) + (useSources ? t.sources || 0 : 0);
+    var list = $('projectBudget');
+    list.textContent = '';
+    [['Инструкции и описание', t.instructions, ''], ['Память проекта', t.memory, useMemory ? '' : 'выключена'],
+      ['Материалы', t.sources, useSources ? '' : 'выключены']].forEach(function (row) {
+      list.appendChild(el('dt', null, row[0]));
+      list.appendChild(el('dd', null, '≈ ' + formatNumber(row[1] || 0) + (row[2] ? ' · ' + row[2] : '')));
+    });
+    list.appendChild(el('dt', 'gpt-project-budget-total', 'Всего в каждом запросе'));
+    list.appendChild(el('dd', 'gpt-project-budget-total', '≈ ' + formatNumber(total) + (windowTokens ? ' · ' + Math.max(1, Math.round(total * 100 / windowTokens)) + ' % окна' : '')));
+    var share = Number($('projectShare').value) || 40;
+    var hint = windowTokens ? 'Окно модели «' + option.textContent.trim() + '» — ' + formatNumber(windowTokens) + ' токенов. ' : '';
+    if (useSources && windowTokens && (t.sources || 0) > windowTokens * share / 100) {
+      hint += 'Материалы больше гарантированной доли: в длинных чатах модель получит только фрагменты, подходящие к вопросу.';
+    } else {
+      hint += 'Когда история чата перерастает окно, ранняя часть сворачивается в сводку, а факты и решения переходят в память проекта.';
+    }
+    $('projectBudgetHint').textContent = hint;
+  }
+  ['projectModel', 'projectShare', 'projectUseSources', 'projectUseMemory'].forEach(function (id) {
+    $(id).addEventListener('change', renderProjectBudget);
+  });
+
+  function saveProject(fields, statusId, done) {
+    projectStatus(statusId, 'Обезличиваем и сохраняем…');
+    fields.id = state.currentProjectId;
+    return request('POST', 'project_update', form(fields)).then(function (r) {
+      done(r);
+      projectStatus(statusId, 'Сохранено');
+    }).catch(function (error) { projectStatus(statusId, error.message); });
+  }
+  $('projectInstructionsSave').addEventListener('click', function () {
+    saveProject({ description: $('projectDescription').value, instructions: $('projectInstructions').value }, 'projectInstructionsStatus', function (r) {
+      state.projectData.project.description = r.description || '';
+      state.projectData.project.instructions = r.instructions || '';
       $('projectDescription').value = r.description || '';
-      status.textContent = 'Сохранено';
-    }).catch(function (error) { status.textContent = error.message; });
+      $('projectInstructions').value = r.instructions || '';
+      $('projectInstructionsMeta').textContent = r.instructions ? formatNumber(r.instructions.length) + ' симв.' : '';
+    });
+  });
+  function saveMemory(text) {
+    saveProject({ memory: text }, 'projectMemoryStatus', function (r) {
+      state.projectData.project.state = r.memory || '';
+      state.projectData.project.state_updated_at = r.memory ? new Date().toISOString() : null;
+      var status = $('projectMemoryStatus').textContent;
+      renderProjectForms();
+      projectStatus('projectMemoryStatus', status);
+    });
+  }
+  $('projectMemorySave').addEventListener('click', function () { saveMemory($('projectMemory').value); });
+  $('projectMemoryClear').addEventListener('click', function () {
+    var button = $('projectMemoryClear');
+    confirmThen(button, 'Очистить без возврата?', function () {
+      button.removeAttribute('data-confirm');
+      button.textContent = 'Очистить';
+      saveMemory('');
+    });
+  });
+  $('projectSettingsSave').addEventListener('click', function () {
+    var settings = {
+      model_id: Number($('projectModel').value) || 0, style: $('projectStyle').value, sources_share: Number($('projectShare').value) || 40,
+      use_sources: $('projectUseSources').checked, use_memory: $('projectUseMemory').checked
+    };
+    saveProject({ settings: JSON.stringify(settings) }, 'projectSettingsStatus', function (r) {
+      state.projectData.project.settings = r.settings;
+      state.projects = r.projects;
+      $('projectMemoryOff').hidden = r.settings.use_memory !== false;
+      selectProjectModel(state.currentProjectId);
+    });
   });
 
   /* ---------- голосовой ввод ---------- */

@@ -1,0 +1,52 @@
+<p class="muted llm-lead">Состояние всех частей LLM-провайдера. Действия с контейнерами выполняет помощник обслуживания на сервере
+  (служба systemd, белый список действий); у веб-приложения нет доступа к Docker и команде root.</p>
+
+<div class="grid grid-3 llm-status-row">
+{% for label, value, cls, sub in tiles %}<div class="stat-tile"><div class="label">{{ label }}</div><div class="value {{ cls }}">{{ value }}</div>{% if sub != '' %}<div class="muted">{{ sub }}</div>{% endif %}</div>{% endfor %}
+</div>
+
+<p class="section-title">Контейнеры и ресурсы</p>
+{% if host is none %}
+<div class="alert alert-warn">Помощник обслуживания не установлен или не отвечает — состояние контейнеров недоступно. Установка на сервере: <code>sudo scripts/updater.sh install</code>.</div>
+{% else %}
+<p class="muted maint-meta">Обновлено {{ (host.at|string)[:19]|replace('T', ' ') }} UTC · нагрузка {{ host.load|string }} ·
+  память свободно {{ (host.memory or {}).get('available_gb', '?')|string }} из {{ (host.memory or {}).get('total_gb', '?')|string }} ГБ</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Служба</th><th>Состояние</th><th>CPU</th><th>Память</th><th>Образ</th></tr></thead>
+  <tbody>
+{% for s in services %}
+    <tr><td>{{ s.service }}</td>
+      <td class="{{ 'status-ok' if s.ok else 'status-bad' }}">{{ s.status }}</td>
+      <td>{{ s.cpu }}</td><td>{{ s.mem }}</td><td class="mono maint-image">{{ s.image }}</td></tr>
+{% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<p class="section-title">Действия</p>
+<div class="maint-actions">
+{% for key, label in actions.items() %}
+  <form method="post" action="index.php?section=maintenance&action=helper_request"{% if key == 'update' %} data-confirm="Обновить приложение? Перед обновлением создаётся резервная копия; при сбое — автоматический откат."{% endif %}>
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="helper_action" value="{{ key }}">
+    <button class="btn{{ ' btn-primary' if key == 'update' else '' }}" type="submit"{% if not helper_alive %} disabled title="Помощник обслуживания не отвечает"{% endif %}>{{ label }}</button>
+  </form>
+{% endfor %}
+</div>
+{% if status is not none %}
+<div class="alert {{ status.class }}">
+  {{ status.text }}
+  ({{ status.at }} UTC) — {{ status.message }}
+</div>
+{% endif %}
+
+<p class="section-title">Последние ошибки</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th>Когда (UTC)</th><th>Источник</th><th>Этап</th><th>Причина</th></tr></thead>
+  <tbody>
+{% if not errors %}<tr><td colspan="4" class="muted">Ошибок нет.</td></tr>{% endif %}
+{% for e in errors %}
+    <tr><td>{{ e.when }}</td><td>{{ e.source }}</td>
+      <td class="mono">{{ e.event_code }}</td><td>{{ e.short }}</td></tr>
+{% endfor %}
+  </tbody>
+</table></div>

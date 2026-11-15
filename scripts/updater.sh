@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# updater.sh — помощник обслуживания на хосте (root) для действий из веб-админки (приёмы scripts/updater.sh ArkLock).
+# updater.sh — помощник обслуживания на хосте для действий из веб-админки (приёмы scripts/updater.sh ArkLock).
 #
 #   sudo scripts/updater.sh install     установить службу systemd llmprov-updater-<проект>
 #   sudo scripts/updater.sh uninstall
 #   scripts/updater.sh run              цикл службы (вызывает systemd)
 #
-# Контейнер php пишет $DATA_ROOT/updater/request.txt; Docker-сокета у контейнера нет. Помощник:
+# Служба работает от имени владельца репозитория (группа docker), не root. Контейнер app пишет $DATA_ROOT/updater/inbox/request.txt,
+# остальной $DATA_ROOT/updater у него только на чтение; Docker-сокета у контейнера нет. Помощник:
 #  - принимает только обычный файл (не symlink) до 1024 байт, строки key=value, неизвестный ключ — отказ;
 #  - action из белого списка: check | update | backup | backup_verify | verify | diag; значения сверяются с шаблонами;
 #  - атомарно забирает запрос (rename), выполняет те же CLI-скрипты в стерильном окружении (env -i), пишет status.json и history.jsonl;
@@ -43,7 +44,7 @@ run_action() {
   local sc="$REPO_ROOT/scripts" out rc=0
   local -a cmd
   case "$ACTION" in
-    check) cmd=("$sc/update.sh" --check) ;;
+    check) cmd=("$sc/check-updates.sh") ;;
     update) cmd=("$sc/update.sh" --yes) ;;
     backup) cmd=("$sc/backup.sh") ;;
     backup_verify) [ -n "$FILE_ARG" ] || { json_status failed "$ACTION" "не указан файл"; return; }; cmd=("$sc/backup.sh" --restore-test "${BACKUP_DIR:-$DATA_ROOT/backups}/$FILE_ARG") ;;
@@ -53,6 +54,7 @@ run_action() {
   json_status running "$ACTION" "выполняется"
   # HOME — домашний каталог пользователя службы (root → /root); не каталог обмена: он доступен на запись всем
   out="$(env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$(getent passwd "$(id -u)" | cut -d: -f6)" ENV_FILE="$ENV_FILE" ${COMPOSE_EXTRA_FILE:+COMPOSE_EXTRA_FILE="$COMPOSE_EXTRA_FILE"} "${cmd[@]}" 2>&1)" || rc=$?
+  [ "$ACTION" = check ] && [ "$rc" -eq 10 ] && rc=0   # check-updates.sh: 10 — «доступно обновление», это успешная проверка
   printf '%s\n' "$out" | mask_stream > "$X/last-output.txt"; chmod 644 "$X/last-output.txt"
   json_status "$([ $rc -eq 0 ] && echo done || echo failed)" "$ACTION" "$(printf '%s' "$out" | mask_stream | tail -3 | tr '\n' ' ')"
   printf '{"at":"%s","action":"%s","result":"%s"}\n' "$(date -u +%FT%TZ)" "$ACTION" "$([ $rc -eq 0 ] && echo ok || echo failed)" >> "$X/history.jsonl"
@@ -68,6 +70,8 @@ After=docker.service
 Requires=docker.service
 
 [Service]
+# от имени владельца репозитория (группа docker): git и файлы кода остаются его, root не нужен
+User=$(stat -c %U "$REPO_ROOT")
 Environment=ENV_FILE=$ENV_FILE
 ExecStart=$REPO_ROOT/scripts/updater.sh run
 Restart=always
@@ -79,14 +83,15 @@ UNIT
     systemctl daemon-reload && systemctl enable --now "$UNIT" && ok "Служба $UNIT установлена" ;;
   uninstall) systemctl disable --now "$UNIT" 2>/dev/null || true; rm -f "/etc/systemd/system/$UNIT.service"; systemctl daemon-reload; ok "Служба $UNIT удалена" ;;
   run)
-    mkdir -p "$X"; chmod 1777 "$X" 2>/dev/null || true   # права выставляет install.sh (prepare_data_dirs)
+    [ -d "$X/inbox" ] && [ ! -L "$X/inbox" ] || die "Нет каталога $X/inbox — выполните scripts/ctl.sh repair"
+    [ "$(stat -c %u "$X")" = "$(id -u)" ] || die "Каталог $X должен принадлежать пользователю помощника ($(id -un)) — scripts/ctl.sh repair"
     if grep -q '"state":"running"' "$X/status.json" 2>/dev/null; then json_status failed interrupted "операция прервана перезапуском помощника — проверьте scripts/ctl.sh verify; прерванное обновление: scripts/update.sh --recover"; fi
     last=0
     while [ "$STOP_EARLY" = 0 ]; do
       printf '{"at":"%s","pid":%d}\n' "$(date -u +%FT%TZ)" $$ > "$X/helper.json"
       if [ $(( $(date +%s) - last )) -ge 60 ]; then "$REPO_ROOT/scripts/ctl.sh" status --json > "$X/host-status.json.tmp" 2>/dev/null && mv -f "$X/host-status.json.tmp" "$X/host-status.json" && chmod 644 "$X/host-status.json"; last=$(date +%s); fi
-      if [ -e "$X/request.txt" ]; then
-        rm -f "$X/request.processing"; mv -f "$X/request.txt" "$X/request.processing" 2>/dev/null || { sleep 2; continue; }
+      if [ -e "$X/inbox/request.txt" ]; then
+        rm -f "$X/request.processing"; mv -f "$X/inbox/request.txt" "$X/request.processing" 2>/dev/null || { sleep 2; continue; }
         if parse_request "$X/request.processing"; then run_action; else json_status failed rejected "запрос отклонён: неверный формат"; fi
         rm -f "$X/request.processing"
       fi

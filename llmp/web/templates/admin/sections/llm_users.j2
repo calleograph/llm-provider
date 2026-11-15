@@ -1,0 +1,144 @@
+{# Раздел «Пользователи чата» (перенос public/admin/sections/llm_users.php) #}
+<p class="muted llm-lead">
+  Профиль создаётся автоматически при первом входе пользователя в чат. Лимит считается в токенах, которые вернул
+  провайдер (вся переданная история, контекст проекта и ответ), либо по оценке «символы / 3». Расход хранится
+  одной строкой на пользователя в день, длинные сообщения и источники — в сжатом виде.
+</p>
+
+<p class="section-title">Хранение</p>
+<form method="post" action="index.php?section=llm_users&action=save_defaults">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="limit_period" value="{{ s('limit_period') }}">
+  <input type="hidden" name="limit_tokens" value="{{ s('limit_tokens') }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="retention_days">Хранить неиспользуемые чаты, дней (0 — бессрочно){{ setting_code('CHAT_RETENTION_DAYS') }}</label>
+      <input class="text-input" type="number" min="0" id="retention_days" name="retention_days" value="{{ s('retention_days') }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="project_sources_max_chars">Объём источников проекта, символов{{ setting_code('PROJECT_SOURCES_MAX_CHARS') }}</label>
+      <input class="text-input" type="number" min="1000" id="project_sources_max_chars" name="project_sources_max_chars" value="{{ s('project_sources_max_chars') }}">
+      <p class="muted llm-note">Весь этот текст добавляется целиком в каждый запрос к модели — слишком большое значение может переполнить контекст компактных моделей.</p>
+    </div>
+    <div class="field">
+      <label class="field-label" for="project_sources_max_files">Макс. источников в проекте{{ setting_code('PROJECT_SOURCES_MAX_FILES') }}</label>
+      <input class="text-input" type="number" min="1" max="50" id="project_sources_max_files" name="project_sources_max_files" value="{{ s('project_sources_max_files') }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="project_instructions_max_blocks">Макс. блоков инструкций в проекте{{ setting_code('PROJECT_INSTRUCTIONS_MAX_BLOCKS') }}</label>
+      <input class="text-input" type="number" min="1" max="30" id="project_instructions_max_blocks" name="project_instructions_max_blocks" value="{{ s('project_instructions_max_blocks') }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="project_instruction_max_chars">Макс. длина одного блока инструкций, символов{{ setting_code('PROJECT_INSTRUCTION_MAX_CHARS') }}</label>
+      <input class="text-input" type="number" min="100" max="20000" id="project_instruction_max_chars" name="project_instruction_max_chars" value="{{ s('project_instruction_max_chars') }}">
+    </div>
+    <div class="field">
+      <label class="field-label" for="inactivity_content_purge_days">Зачищать содержимое чатов при неактивности, дней (0 — никогда){{ setting_code('CHAT_INACTIVITY_PURGE_DAYS') }}</label>
+      <input class="text-input" type="number" min="0" id="inactivity_content_purge_days" name="inactivity_content_purge_days" value="{{ s('inactivity_content_purge_days') }}">
+    </div>
+  </div>
+  <p class="muted llm-note">
+    Закреплённые чаты сроком хранения не удаляются. Зачистка при неактивности удаляет только текст сообщений
+    и источников проектов (для экономии места) — заголовки чатов и структура истории остаются видны пользователю.
+  </p>
+  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button></div>
+</form>
+
+<details class="llm-details">
+  <summary class="section-title">Лимит по умолчанию — устаревший способ (используется, только пока нет ни одной категории лимита)</summary>
+  <form method="post" action="index.php?section=llm_users&action=save_defaults">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="retention_days" value="{{ s('retention_days') }}">
+    <input type="hidden" name="project_sources_max_chars" value="{{ s('project_sources_max_chars') }}">
+    <input type="hidden" name="project_sources_max_files" value="{{ s('project_sources_max_files') }}">
+    <input type="hidden" name="project_instructions_max_blocks" value="{{ s('project_instructions_max_blocks') }}">
+    <input type="hidden" name="project_instruction_max_chars" value="{{ s('project_instruction_max_chars') }}">
+    <input type="hidden" name="inactivity_content_purge_days" value="{{ s('inactivity_content_purge_days') }}">
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label" for="limit_period">Период</label>
+        <select class="text-input" id="limit_period" name="limit_period">
+{% for value, label in period_labels.items() %}
+          <option value="{{ value }}" {{ 'selected' if s('limit_period') == value }}>{{ label }}</option>
+{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="limit_tokens">Токенов на период</label>
+        <input class="text-input" type="number" min="0" id="limit_tokens" name="limit_tokens" value="{{ s('limit_tokens') }}">
+      </div>
+    </div>
+    <p class="muted llm-note">
+      Категории лимита (раздел <a href="index.php?section=llm_limits">«Категории лимитов»</a>) — рекомендуемый способ
+      управления лимитами; эти поля применяются только для пользователей без персональной/групповой категории, если
+      категорий вообще не заведено.
+    </p>
+    <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button></div>
+  </form>
+</details>
+
+<hr class="sep">
+
+<p class="section-title">Пользователи ({{ rows | length }})</p>
+{% if not rows %}
+<p class="muted">Пользователи ещё не входили в чат.</p>
+{% else %}
+<div class="llm-table-wrap">
+<table class="data-table">
+  <thead><tr><th>Пользователь</th><th>Последний вход</th><th>Израсходовано / лимит</th><th>Хранилище</th><th>Запросов за 30 дн.</th><th>Лимит</th><th>Доступ</th></tr></thead>
+  <tbody>
+{% for item in rows %}{% set row = item.row %}{% set status = item.status %}{% set storage = item.storage %}
+    <tr class="{{ 'llm-row-muted' if row.is_blocked else '' }}">
+      <td><strong>{{ row.username }}</strong><span class="muted mono llm-matrix-sub">{{ row.domain_fqdn }}</span></td>
+      <td class="mono">{{ (row.last_seen_at | string)[:16] | replace('T', ' ') }}</td>
+      <td class="{{ 'status-bad' if item.over else '' }}">
+        {{ number_format(status.used) }} / {{ 'без лимита' if status.limit is none else number_format(status.limit) }}
+        <span class="muted llm-matrix-sub">{{ period_labels.get(status.period, status.period) }} · {{ status.source }}</span>
+      </td>
+      <td class="{{ 'status-bad' if item.storage_over else '' }}">
+        {{ number_format(storage.used_bytes / 1024 / 1024, 1) }} МБ
+        {{ '' if storage.limit_bytes is none else ' / ' ~ number_format(storage.limit_bytes / 1024 / 1024) ~ ' МБ' }}
+      </td>
+      <td>{{ row.requests_30d | int }}</td>
+      <td>
+        <form id="{{ item.form_id }}" method="post" action="index.php?section=llm_users&action=save_user_limit" class="llm-inline-form" data-limit-form>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="owner_key" value="{{ row.owner_key }}">
+          <select class="text-input" name="category" aria-label="Лимит" data-limit-category>
+            <option value="inherit" {{ 'selected' if item.select_value == 'inherit' }}>Как у группы / по умолчанию</option>
+{% for cat in categories %}
+            <option value="{{ cat.id }}" {{ 'selected' if item.select_value == cat.id | string }}>{{ cat.name }}</option>
+{% endfor %}
+            <option value="manual" {{ 'selected' if item.select_value == 'manual' }}>Вручную…</option>
+          </select>
+          <span data-limit-manual-fields{{ '' if item.select_value == 'manual' else ' hidden' }}>
+            <select class="text-input" name="period" aria-label="Период">
+{% for value, label in period_labels.items() %}
+              <option value="{{ value }}" {{ 'selected' if row.limit_period == value }}>{{ label }}</option>
+{% endfor %}
+            </select>
+            <input class="text-input" type="number" min="0" name="tokens" aria-label="Токенов" placeholder="токенов" value="{{ row.limit_tokens | int if row.limit_tokens is not none else '' }}">
+          </span>
+          <button class="btn btn-small" type="submit">Сохранить</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="index.php?section=llm_users&action=toggle_block">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="owner_key" value="{{ row.owner_key }}">
+          <button class="btn btn-small{{ '' if row.is_blocked else ' btn-danger' }}" type="submit">{{ 'Разблокировать' if row.is_blocked else 'Заблокировать' }}</button>
+        </form>
+        <form method="post" action="index.php?section=llm_users&action=clear_user_history"
+              data-confirm-title="Очистить всю историю пользователя?"
+              data-confirm-text="Все диалоги пользователя «{{ row.username }}» будут удалены безвозвратно.">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="owner_key" value="{{ row.owner_key }}">
+          <button class="btn btn-small btn-danger" type="submit">Очистить историю</button>
+        </form>
+      </td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}

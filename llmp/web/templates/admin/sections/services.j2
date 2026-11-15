@@ -1,0 +1,92 @@
+<p class="muted llm-lead">
+  Сводное состояние компонентов LLM-чата. LDAPS проверяется при открытии страницы (DNS, TCP и TLS по общему CA bundle,
+  без учётных данных). Обезличивание и нейросети — по кнопке ниже или в их разделах: такая проверка отправляет
+  синтетический запрос без пользовательских данных.
+</p>
+
+<form method="post" action="index.php?section=services&action=check_external" class="llm-actions">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn btn-primary" type="submit">Проверить обезличивание и нейросети сейчас</button>
+</form>
+
+<p class="section-title">LDAPS и доменные подключения</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th class="llm-col-icon"></th><th>Подключение</th><th>Контроллер</th><th>Назначение</th><th>Групп для чата</th><th>LDAPS</th></tr></thead>
+  <tbody>
+{% for row in domain_rows %}{% set d = row.domain %}
+    <tr>
+      <td><span class="status-dot {{ 'status-ok' if row.reachable else 'status-bad' }}" aria-hidden="true"></span></td>
+      <td>{{ d.config.name }}</td>
+      <td class="mono">{{ d.config.host ~ ':' ~ d.config.port }}</td>
+      <td>
+        {% if d.config.is_active %}<span class="badge badge-active">вход администраторов</span>{% endif %}
+
+        {% if d.llm_enabled %}<span class="badge badge-active">LLM-чат</span>{% endif %}
+
+      </td>
+      <td>{{ row.groups|int if d.llm_enabled else '—' }}</td>
+      <td class="{{ 'status-ok' if row.reachable else 'status-bad' }}">{{ 'Связь установлена' if row.reachable else 'Недоступен' }}</td>
+    </tr>
+{% endfor %}
+{% if not domain_rows %}
+    <tr><td colspan="6" class="muted">Нет подключений. Добавьте подключение в разделе «LDAP-подключения».</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+
+<hr class="sep">
+
+<p class="section-title">Сертификаты</p>
+<div class="status-line-group">
+  <span class="status-line"><span class="label">CA bundle:</span> <span class="value {{ 'status-ok' if bundle_ok else 'status-bad' }}">{{ 'Собран' if bundle_ok else 'Не собран' }}</span></span>
+  <span class="status-line"><span class="label">Загружено / просрочено:</span> <span class="value {{ 'status-bad' if expired > 0 else '' }}">{{ certs|length }} / {{ expired }}</span></span>
+  <span class="status-line"><span class="label">Ближайшее окончание:</span> <span class="value {{ 'status-warn' if expiry_soon else '' }}">{{ nearest if nearest is not none else '—' }}</span></span>
+</div>
+
+<hr class="sep">
+
+<p class="section-title">Обезличивание</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th class="llm-col-icon"></th><th>Сервис</th><th>Состояние</th><th>Последняя проверка</th><th>Результат</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="status-dot {{ 'status-bad' if anon_error else 'status-ok' }}" aria-hidden="true"></span></td>
+      <td>Встроенный сервис anonymizer</td>
+      <td class="{{ 'status-bad' if anon_error else 'status-ok' }}">{{ ('Недоступен — чат заблокирован. ' ~ anon_error) if anon_error else 'Готов' }}</td>
+      <td class="mono">{{ fmt(anon.get('last_check_at')) }}</td>
+      <td>{{ anon.get('last_check_message') }}</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<hr class="sep">
+
+<p class="section-title">LLM-провайдеры</p>
+<div class="llm-table-wrap"><table class="data-table">
+  <thead><tr><th class="llm-col-icon"></th><th>Нейросеть</th><th>Модель</th><th>Статус</th><th>Последняя проверка</th><th>Результат</th></tr></thead>
+  <tbody>
+{% for p in providers %}{% set state = last_check(p.last_check_at, p.last_check_ok) %}
+    <tr>
+      <td><span class="status-dot {{ state.class if p.is_enabled else 'muted' }}" aria-hidden="true"></span></td>
+      <td><a href="index.php?section=llm_providers#provider-{{ p.id|int }}">{{ p.name }}</a></td>
+      <td class="mono">{{ p.model }}</td>
+      <td>{% if p.is_enabled %}<span class="badge badge-active">Включена</span>{% else %}<span class="badge badge-inactive">Отключена</span>{% endif %}</td>
+      <td class="mono">{{ fmt(p.last_check_at) }}</td>
+      <td class="{{ state.class }}">{{ state.label }}{% if p.last_check_message %}<br><span class="muted llm-matrix-sub">{{ p.last_check_message }}</span>{% endif %}</td>
+    </tr>
+{% endfor %}
+{% if not providers %}
+    <tr><td colspan="6" class="muted">Нейросети не добавлены.</td></tr>
+{% endif %}
+  </tbody>
+</table></div>
+
+<hr class="sep">
+
+<p class="section-title">Локальная обработка файлов</p>
+<div class="status-line-group">
+{% for label, ok in tools.items() %}
+  <span class="status-line"><span class="label">{{ label }}:</span> <span class="value {{ 'status-ok' if ok else 'status-warn' }}">{{ 'Доступен' if ok else 'Не найден' }}</span></span>
+{% endfor %}
+  <span class="status-line"><span class="label">Временный каталог:</span> <span class="value {{ 'status-ok' if tmp_ok else 'status-bad' }}">{{ 'Запись разрешена' if tmp_ok else 'Нет прав на запись' }}</span></span>
+</div>

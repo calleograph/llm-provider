@@ -23,11 +23,9 @@ TABLES="llm_providers llm_models llm_conversations llm_messages llm_projects llm
 command -v gpg >/dev/null 2>&1 || die "Нужен gpg (apt install gnupg)"
 mkdir -p "$DIR"; chmod 700 "$DIR" 2>/dev/null || true
 
-image() { docker image inspect "${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG:-local}" >/dev/null 2>&1 && echo "${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG:-local}" || dc images -q php 2>/dev/null | head -1; }
-
-# Проверка распакованной копии: состав, суммы, целостность и счётчики БД (в контейнере с PHP — на хосте PHP может не быть).
+# Проверка распакованной копии: состав, суммы, целостность и счётчики БД (sqlite3 из стандартной библиотеки python3 хоста).
 check_unpacked() {
-  local d="$1" img
+  local d="$1"
   [ -f "$d/manifest.json" ] && [ -f "$d/app.sqlite" ] && [ -f "$d/env" ] || { fail "В копии нет обязательных частей (manifest.json, app.sqlite, env)"; return 1; }
   python3 - "$d" <<'PY' || return 1
 import hashlib, json, os, sys
@@ -37,13 +35,16 @@ for name, want in m["sha256"].items():
     if got != want: print(f"[FAIL] сумма {name} не совпала"); sys.exit(1)
 print(f"[ok] суммы частей совпадают (версия {m['version']}, {m['created']})")
 PY
-  img="$(image)"; [ -n "$img" ] || { warn "Образ php не найден — проверка БД пропущена"; return 0; }
-  docker run --rm --network none --user "$(id -u):$(id -g)" -v "$d:/v:ro" --entrypoint php "$img" -r '
-    $m = json_decode(file_get_contents("/v/manifest.json"), true);
-    $p = new PDO("sqlite:/v/app.sqlite"); $p->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    if ($p->query("PRAGMA integrity_check")->fetchColumn() !== "ok") { echo "[FAIL] БД: integrity_check\n"; exit(1); }
-    foreach ($m["counts"] as $t => $n) { $c = (int) $p->query("SELECT COUNT(*) FROM $t")->fetchColumn(); if ($c !== $n) { echo "[FAIL] $t: $c, в манифесте $n\n"; exit(1); } }
-    echo "[ok] БД: целостность в порядке, счётчики совпадают (" . count($m["counts"]) . " таблиц)\n";'
+  python3 - "$d" <<'PY'
+import json, os, sqlite3, sys
+d = sys.argv[1]; m = json.load(open(os.path.join(d, "manifest.json")))
+c = sqlite3.connect(f"file:{os.path.join(d, 'app.sqlite')}?mode=ro", uri=True)
+if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok": print("[FAIL] БД: integrity_check"); sys.exit(1)
+for t, n in m["counts"].items():
+    got = c.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+    if got != n: print(f"[FAIL] {t}: {got}, в манифесте {n}"); sys.exit(1)
+print(f"[ok] БД: целостность в порядке, счётчики совпадают ({len(m['counts'])} таблиц)")
+PY
 }
 
 decrypt_to() { # FILE DIR
@@ -76,14 +77,20 @@ esac
 name="${COMPOSE_PROJECT_NAME}-$(date -u +%Y%m%d-%H%M%S)-$(app_version).bak.gpg"
 tmp="$(mktemp -d "$DIR/.make.XXXX")"; trap 'rm -rf "$tmp"; rm -f "$DIR/$name.part"' EXIT
 umask 077
-# Согласованный снимок БД внутри контейнера php (VACUUM INTO), затем поток tar наружу — без доступа хоста к файлам uid 33.
-dc exec -T php php -r '@unlink("/data/app/.snapshot.sqlite"); (new PDO("sqlite:/data/app/data/app.sqlite"))->exec("VACUUM INTO \x27/data/app/.snapshot.sqlite\x27");'
-dc exec -T php sh -c 'cd /data/app && mkdir -p certs && tar -cf - .snapshot.sqlite certs' | tar -xf - -C "$tmp"
-dc exec -T php rm -f /data/app/.snapshot.sqlite
-mv "$tmp/.snapshot.sqlite" "$tmp/app.sqlite"
+# Согласованный снимок БД внутри контейнера app (VACUUM INTO), затем поток tar наружу — без доступа хоста к файлам uid 33.
+# Имя снимка уникально: параллельная копия (cron и кнопка в админке) не затрёт чужой снимок.
+snap=".snapshot-$$-$RANDOM.sqlite"
+dc exec -T app python -m llmp.cli snapshot "/data/app/$snap"
+dc exec -T app sh -c "cd /data/app && mkdir -p certs && tar -cf - '$snap' certs" | tar -xf - -C "$tmp"
+dc exec -T app rm -f "/data/app/$snap"
+mv "$tmp/$snap" "$tmp/app.sqlite"
 cp "$ENV_FILE" "$tmp/env"
-img="$(image)"
-counts="$(docker run --rm --network none --user "$(id -u):$(id -g)" -v "$tmp:/v:ro" --entrypoint php "$img" -r '$p = new PDO("sqlite:/v/app.sqlite"); $o = []; foreach (explode(" ", $argv[1]) as $t) { try { $o[$t] = (int) $p->query("SELECT COUNT(*) FROM $t")->fetchColumn(); } catch (Throwable) {} } echo json_encode($o);' "$TABLES")"
+# shellcheck disable=SC2086
+counts="$(python3 -c 'import json,sqlite3,sys; c=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True); o={}
+for t in sys.argv[2:]:
+    try: o[t]=c.execute(f"SELECT COUNT(*) FROM \"{t}\"").fetchone()[0]
+    except sqlite3.Error: pass
+print(json.dumps(o))' "$tmp/app.sqlite" $TABLES)"
 python3 - "$tmp" "$(app_version)" "$(app_commit)" "$counts" <<'PY'
 import hashlib, json, os, sys, datetime
 d, ver, commit, counts = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
@@ -98,6 +105,6 @@ printf '{"sha256":"%s","created":"%s","version":"%s"}\n' "$(sha256sum "$DIR/$nam
 ok "Копия создана: $DIR/$name ($(du -h "$DIR/$name" | cut -f1))"
 # Проверка сразу после создания: непроверенная копия — не копия (ArkLock). Неудача — копия удаляется.
 if ! verify "$DIR/$name"; then rm -f "$DIR/$name" "$DIR/$name.json"; die "Созданная копия не прошла проверку и удалена"; fi
-# ротация: последние KEEP копий
-ls -1t "$DIR"/"${COMPOSE_PROJECT_NAME}"-*.bak.gpg 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old" "$old.json"; info "Удалена старая копия $(basename "$old")"; done
+# ротация: последние KEEP копий; цифра после имени — копии проекта «llm-test» не совпадут с «llm»
+ls -1t "$DIR"/"${COMPOSE_PROJECT_NAME}"-[0-9]*.bak.gpg 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old" "$old.json"; info "Удалена старая копия $(basename "$old")"; done
 echo "$DIR/$name"
