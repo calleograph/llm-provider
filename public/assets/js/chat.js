@@ -979,7 +979,14 @@
   function selectProjectModel(projectId) {
     var id = projectId && (projectById(projectId) || {}).model_id;
     var option = id && els.model && els.model.tagName === 'SELECT' && els.model.querySelector('option[value$=":' + id + '"]');
-    if (option) els.model.value = option.value;
+    if (option) { els.model.value = option.value; return; }
+    // новый чат без модели проекта начинается с базовой модели (её помечает сервер), а не с той, что выбрали в прошлом чате
+    if (els.model && els.model.tagName === 'SELECT') {
+      for (var i = 0; i < els.model.options.length; i++) {
+        if (els.model.options[i].defaultSelected) { els.model.selectedIndex = i; return; }
+      }
+      els.model.selectedIndex = 0;
+    }
   }
 
   // Значение списка — «провайдер:модель». Диалог восстанавливает свою модель (или модель провайдера по умолчанию).

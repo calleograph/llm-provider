@@ -121,7 +121,7 @@ def handle(page: AdminPage) -> str:
                 if existing["is_default"]:
                     providers.clear_default()
                     events.admin(admin, ip, "llm_provider_default_clear", True, {"id": posted_id, "name": existing["name"]})
-                    page.flash_success = f"Нейросеть «{existing['name']}» больше не открывается по умолчанию — снова действует порядок по алфавиту."
+                    page.flash_success = f"Нейросеть «{existing['name']}» больше не открывается по умолчанию — первой в списке встаёт модель с наименьшим приоритетом."
                 else:
                     providers.set_default(posted_id)
                     events.admin(admin, ip, "llm_provider_default_set", True, {"id": posted_id, "name": existing["name"]})
