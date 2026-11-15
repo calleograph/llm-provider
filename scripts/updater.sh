@@ -55,9 +55,12 @@ run_action() {
   # ход работы — построчно в live-output.txt (раздел «Обновление» показывает его, пока идёт действие); секреты скрыты
   : > "$X/live-output.txt"; chmod 644 "$X/live-output.txt"
   # HOME — домашний каталог пользователя службы (root → /root); не каталог обмена: он доступен на запись всем
+  # без set -e вокруг конвейера: код 10 («есть обновление») и сбои действий не должны завершать самого помощника
+  set +e
   env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$(getent passwd "$(id -u)" | cut -d: -f6)" ENV_FILE="$ENV_FILE" ${COMPOSE_EXTRA_FILE:+COMPOSE_EXTRA_FILE="$COMPOSE_EXTRA_FILE"} "${cmd[@]}" 2>&1 \
     | mask_stream >> "$X/live-output.txt"
   rc=${PIPESTATUS[0]}
+  set -e
   [ "$ACTION" = check ] && [ "$rc" -eq 10 ] && rc=0   # check-updates.sh: 10 — «доступно обновление», это успешная проверка
   cp -f "$X/live-output.txt" "$X/last-output.txt"; chmod 644 "$X/last-output.txt"
   out="$(cat "$X/live-output.txt")"

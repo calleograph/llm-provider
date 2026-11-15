@@ -39,6 +39,23 @@ t "автопочинка: зависший .git/index.lock снят" bash -c "b
 
 t "автопочинка: мелкий клон догружен, обновление видно" bash -c "bash '$T/shallow/scripts/check-updates.sh'; [ \$? -eq 10 ] && [ \"\$(git -C '$T/shallow' rev-parse --is-shallow-repository)\" = false ]"
 
+# помощник обслуживания: код 10 проверки («есть обновление») — успех, а не причина завершиться (set -e + конвейер);
+# вывод идёт построчно в live-output.txt, после действия помощник жив
+helper_survives_exit_10() {
+  local H="$T/helper" X="$T/data/updater" pid i
+  mkdir -p "$H" "$X/inbox"; cp -r "$SRC/scripts" "$H/"
+  printf '#!/bin/sh\necho "Доступно: 9.9.9"\nexit 10\n' > "$H/scripts/check-updates.sh"
+  printf '#!/bin/sh\nexit 1\n' > "$H/scripts/ctl.sh"
+  printf 'action=check\nid=0123456789abcdef\n' > "$X/inbox/request.txt"
+  bash "$H/scripts/updater.sh" run > "$T/helper.log" 2>&1 & pid=$!
+  for i in $(seq 1 40); do grep -q '"state":"done"' "$X/status.json" 2>/dev/null && break; sleep 0.25; done
+  local ok=1
+  grep -q '"state":"done"' "$X/status.json" && grep -q "Доступно: 9.9.9" "$X/live-output.txt" && kill -0 "$pid" 2>/dev/null && ok=0
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  return $ok
+}
+t "помощник: код 10 проверки не завершает его, итог «готово», вывод в live-output.txt" helper_survives_exit_10
+
 echo "local edit" >> "$T/branch/VERSION"
 save_and_continue() {
   # shellcheck source=/dev/null
