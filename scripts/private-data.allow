@@ -1,0 +1,65 @@
+# Разрешённые в репозитории домены и адреса (универсальные примеры и публичная инфраструктура).
+# Всё остальное scripts/check_private_data.py считает возможной частной настройкой конкретного сервера и останавливает CI.
+# Реальные значения своего сервера в репозиторий не вносятся: они живут в БД, в .env вне git и в каталоге данных.
+# Формат: домен (допустимы и его поддомены) либо `ip:<регулярное выражение целого адреса>`.
+
+# --- RFC 2606/6761
+example.com
+example.org
+example.net
+example
+test
+invalid
+example.local
+# --- вымышленные корпоративные домены тестов и примеров
+corp.local
+corp
+domain.local
+# --- публичная инфраструктура (пакеты, образы, модели, документация, API провайдеров)
+github.com
+githubusercontent.com
+ghcr.io
+docker.io
+docker.com
+pypi.org
+pythonhosted.org
+huggingface.co
+sberdevices.ru
+pytorch.org
+openai.com
+anthropic.com
+polza.ai
+openrouter.ai
+deepseek.com
+nginx.org
+php.net
+phpunit.de
+getcomposer.org
+debian.org
+ubuntu.com
+alpinelinux.org
+w3.org
+openxmlformats.org
+oasis-open.org
+purl.org
+microsoft.com
+schemas.microsoft.com
+fonts.googleapis.com
+gstatic.com
+mozilla.org
+# --- IP: loopback, «неопределённый», документационные диапазоны, тестовые числа
+ip:127\.\d+\.\d+\.\d+
+ip:0\.0\.0\.0
+ip:192\.0\.2\.\d+
+ip:198\.51\.100\.\d+
+ip:203\.0\.113\.\d+
+ip:10\.0\.0\.\d+
+ip:172\.16\.0\.\d+
+ip:192\.168\.0\.\d+
+ip:169\.254\.\d+\.\d+
+ip:1\.2\.3\.4
+ip:255\.255\.255\.\d+
+proglib.io
+sil.org
+other.local
+anon.local

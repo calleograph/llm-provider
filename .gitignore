@@ -1,0 +1,31 @@
+# Секреты и рабочие данные — никогда не в репозитории.
+/var/data/
+/var/*
+!/var/.htaccess
+/var/certs/
+/var/logs/
+/var/sessions/
+/var/tmp/
+
+# Зависимости и артефакты сборки.
+/vendor/
+/src/native/kpasswd_helper
+*.o
+
+# Тестовый кэш и случайные экспорты (например, «Скачать .txt» из «Журнал»).
+.phpunit.result.cache
+/log_all_*.txt
+
+# IDE / ОС.
+.DS_Store
+Thumbs.db
+
+# Docker/установка: секреты и данные хоста вне репозитория.
+.env
+.env.*
+!.env.example
+/data/
+/models/
+__pycache__/
+*.pyc
+.pytest_cache/

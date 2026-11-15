@@ -1,0 +1,35 @@
+{
+    "name": "llm-provider/llm-provider",
+    "description": "Внутренний корпоративный AI-чат с доменной авторизацией (Active Directory/LDAPS) и обезличиванием данных перед отправкой во внешние LLM",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2",
+        "ext-ldap": "*",
+        "ext-openssl": "*",
+        "ext-pdo": "*",
+        "ext-pdo_sqlite": "*",
+        "ext-mbstring": "*",
+        "ext-session": "*",
+        "ext-curl": "*",
+        "ext-dom": "*",
+        "ext-zip": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "App\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit --colors=always",
+        "lint": "php -l public/index.php"
+    }
+}
