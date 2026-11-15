@@ -38,6 +38,7 @@ def run_once(last_hourly: float, now: float | None = None) -> float:
         conn = db.connect()
         try:
             _task("mail", lambda: MailQueue(conn).process(MailSettings(AppSettings(conn))))
+            _task("dlp rescan", lambda: Telemetry(conn).rescan_step())
             if now - last_hourly >= HOURLY_S:
                 last_hourly = now
                 _task("log rotation", lambda: LogRotation(conn).rotate_if_needed())

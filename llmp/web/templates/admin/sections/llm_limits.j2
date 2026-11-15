@@ -20,7 +20,7 @@
     </div>
     <div class="field">
       <label class="field-label" for="tokens-{{ sfx }}">Токенов за период</label>
-      <input class="text-input{{ ' has-error' if 'tokens' in errors }}" type="number" min="0" id="tokens-{{ sfx }}" name="tokens" value="{{ val(card_id, 'tokens', '50000') }}">
+      <input class="text-input{{ ' has-error' if 'tokens' in errors }}" type="number" min="0" id="tokens-{{ sfx }}" name="tokens" value="{{ val(card_id, 'tokens', '300000') }}">
       {% if 'tokens' in errors %}<p class="field-error">{{ errors.tokens }}</p>{% endif %}
     </div>
     <div class="field">

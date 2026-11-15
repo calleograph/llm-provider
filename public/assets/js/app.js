@@ -13,6 +13,13 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   initConfirmModal();
+  initUpdateTerminal();
+  // «Все на странице» в ленте аудита: отмечает галочки записей своей формы
+  document.querySelectorAll('[data-check-all]').forEach(function (box) {
+    box.addEventListener('change', function () {
+      box.form.querySelectorAll('input[name="ids[]"]').forEach(function (c) { c.checked = box.checked; });
+    });
+  });
   initDraftAutosave();
   initThemeToggle();
   initCommandCopy();
@@ -277,67 +284,24 @@ function fallbackCopy(value, done) {
 }
 
 /**
- * Выбор темы оформления (набор тем «Переговорки»). Применяется ко всей странице
- * (data-theme на <html>; «Как в системе» — без атрибута), запоминается в
- * localStorage 'llm:theme' только в этом браузере. Пока пользователь не выбрал
- * тему сам, действует тема администратора или «Стекло» — см. theme.js.
+ * Тема оформления: одна кнопка солнце/луна (светлая «Стекло» / «Тёмная»). Применяется ко всей странице (data-theme на <html>),
+ * запоминается в localStorage 'llm:theme' только в этом браузере. Пока пользователь не выбрал сам, действует тема
+ * администратора или «Стекло» — см. theme.js.
  */
 function initThemeToggle() {
-  var pickers = document.querySelectorAll('[data-theme-picker]');
-  if (!pickers.length) {
-    return;
-  }
+  var buttons = document.querySelectorAll('[data-theme-switch]');
   var root = document.documentElement;
-
-  function render(theme) {
-    pickers.forEach(function (picker) {
-      picker.querySelectorAll('[data-theme-btn]').forEach(function (button) {
-        var active = button.dataset.themeBtn === theme;
-        button.setAttribute('aria-pressed', String(active));
-        if (active) {
-          picker.querySelector('[data-theme-label]').textContent = button.querySelector('.theme-opt-label').textContent;
-          picker.querySelector('[data-theme-dot]').dataset.swatch = theme;
-        }
-      });
-    });
+  function render() {
+    var dark = root.getAttribute('data-theme') === 'dark';
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(dark)); });
   }
-
-  render(root.getAttribute('data-theme') || 'glass');
-  pickers.forEach(function (picker) {
-    picker.addEventListener('click', function (event) {
-      var button = event.target.closest('[data-theme-btn]');
-      if (!button) {
-        return;
-      }
-      var theme = button.dataset.themeBtn;
+  render();
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var theme = root.getAttribute('data-theme') === 'dark' ? 'glass' : 'dark';
       root.setAttribute('data-theme', theme);
-      try {
-        localStorage.setItem('llm:theme', theme);
-      } catch (err) {
-        // localStorage недоступен (приватный режим и т.п.) — тема просто не запомнится.
-      }
-      render(theme);
-      picker.open = false;
-      picker.querySelector('summary').focus();
-    });
-  });
-  // меню закрывается по Escape и щелчку мимо
-  document.addEventListener('click', function (event) {
-    pickers.forEach(function (picker) {
-      if (picker.open && !picker.contains(event.target)) {
-        picker.open = false;
-      }
-    });
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape') {
-      return;
-    }
-    pickers.forEach(function (picker) {
-      if (picker.open) {
-        picker.open = false;
-        picker.querySelector('summary').focus();
-      }
+      try { localStorage.setItem('llm:theme', theme); } catch (err) { /* приватный режим — тема просто не запомнится */ }
+      render();
     });
   });
 }
@@ -492,3 +456,79 @@ document.addEventListener('change', function (e) {
     el.form.requestSubmit ? el.form.requestSubmit() : el.form.submit();
   }
 });
+
+/**
+ * Окно-терминал раздела «Обновление»: дочитывает журнал помощника частями (action=log, JSON), показывает этап «N из M»
+ * и итог. Пока идёт действие — опрос раз в 1,5 с, иначе раз в 8 с. Если приложение перезапускается при обновлении,
+ * запросы падают — окно пишет об этом и продолжает опрос, пока сервер не ответит снова.
+ */
+function initUpdateTerminal() {
+  var box = document.querySelector('[data-upd-term]');
+  if (!box) return;
+  var screen = box.querySelector('[data-upd-screen]'), follow = box.querySelector('[data-upd-follow]');
+  var badge = box.querySelector('[data-upd-badge]'), at = box.querySelector('[data-upd-at]'), result = box.querySelector('[data-upd-result]');
+  var progress = box.querySelector('[data-upd-progress]'), bar = box.querySelector('[data-upd-bar]'), stepEl = box.querySelector('[data-upd-step]');
+  var offset = 0, text = '', lost = false, wasRunning = box.getAttribute('data-running') === '1', timer = null;
+  var BADGE = { pending: ['запрос передан помощнику', 'badge-inactive'], running: ['выполняется', 'upd-badge-run'],
+                done: ['завершено успешно', 'badge-active'], failed: ['остановлено', 'llm-badge-bad'] };
+
+  function render(d) {
+    var b = BADGE[d.state] || ['', ''];
+    badge.textContent = lost ? 'нет связи с сервером' : b[0];
+    badge.className = 'badge ' + (lost ? 'tele-badge-raw' : b[1]);
+    badge.hidden = !badge.textContent;
+    if (d.at) at.textContent = d.at + ' UTC';
+    progress.hidden = !(d.action === 'update' && (d.running || d.step > 0));
+    var pct = d.steps ? Math.round(d.step / d.steps * 100) : 0;
+    bar.style.width = (d.state === 'done' ? 100 : Math.max(pct, d.running ? 3 : pct)) + '%';
+    stepEl.textContent = d.step ? 'Этап ' + d.step + ' из ' + d.steps + ': ' + d.step_name : 'Запуск…';
+    result.hidden = true;
+    if (lost) {
+      result.hidden = false; result.className = 'alert alert-warn';
+      result.textContent = 'Связь с сервером прервана — вероятно, приложение перезапускается при обновлении. Окно переподключится само; обновление продолжается на сервере.';
+    } else if (!d.running && d.action === 'update' && d.state === 'done') {
+      result.hidden = false; result.className = 'alert alert-success';
+      result.innerHTML = 'Обновление выполнено: проверки пройдены. <button type="button" class="btn btn-small btn-primary">Обновить страницу</button>';
+      result.querySelector('button').addEventListener('click', function () { location.reload(); });
+    } else if (!d.running && d.action === 'update' && d.state === 'failed') {
+      result.hidden = false; result.className = 'alert alert-error';
+      result.textContent = 'Обновление остановилось. Данные, настройки и модели не затронуты; если переключение уже произошло — вернулась прежняя версия. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) или выполните sudo scripts/update.sh на сервере.';
+    }
+  }
+
+  function poll() {
+    fetch('index.php?section=updates&action=log&offset=' + offset, { cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then(function (d) {
+        lost = false;
+        if (d.reset) { text = ''; }
+        if (d.text) { text = (text + d.text).slice(-600000); }
+        offset = d.offset;
+        screen.textContent = text || 'Ожидание вывода…';
+        if (follow.checked) screen.scrollTop = screen.scrollHeight;
+        if (d.running || d.state) box.hidden = false;
+        render(d);
+        // действие закончилось, пока окно было открыто, — перечитать страницу: версии, история, кнопки
+        if (wasRunning && !d.running && d.action === 'check') { location.reload(); return; }
+        wasRunning = d.running;
+        schedule(d.running ? 1500 : 8000);
+      })
+      .catch(function () {
+        lost = true;
+        render({ state: 'running', action: 'update', running: true, step: 0, steps: 0 });
+        schedule(3000);
+      });
+  }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(poll, ms); }
+
+  screen.addEventListener('scroll', function () {
+    follow.checked = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 40;
+  });
+  box.querySelector('[data-upd-download]').addEventListener('click', function () {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    a.download = 'llm-provider-update-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.log';
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+  poll();
+}

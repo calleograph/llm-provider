@@ -82,6 +82,7 @@ def test_login_page_over_plain_http_sets_cookie_without_secure(web):
     assert 'action="index.php?action=login"' in r.text
     assert 'name="csrf" value="' in r.text
     assert 'name="domain_id" value="' in r.text, "один домен — скрытое поле"
+    assert 'href="admin/">Вход для администратора</a>' in r.text, "локальный администратор входит не здесь — ссылка на админку"
     assert 'href="assets/css/app.css?v=' in r.text and 'src="assets/js/app.js?v=' in r.text
     cookie = r.headers["set-cookie"]
     assert cookie.startswith(COOKIE + "=") and "httponly" in cookie.lower() and "samesite=strict" in cookie.lower()

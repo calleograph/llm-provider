@@ -1,17 +1,30 @@
-{# Раздел «Телеметрия»: сводка, журнал запросов к внешним LLM, диалоги пользователя (только чтение) #}
+{# Раздел «Аудит и DLP»: лента отправленного во внешние нейросети, обзор, правила DLP; карточки записи, пользователя, диалога #}
 {% macro outcome(value) %}{% if value == 'ok' %}<span class="status-ok">успех</span>{% elif value == 'empty' %}<span class="status-warn">пустой ответ</span>{% else %}<span class="status-bad">{{ value }}</span>{% endif %}{% endmacro %}
+{% macro sev_badge(level, text=none) %}<span class="badge audit-sev audit-sev-{{ level }}">{{ text or severities[level] }}</span>{% endmacro %}
+{% macro review_badge(value) %}{% if value == 'incident' %}<span class="badge audit-review-incident">Инцидент</span>{% elif value == 'ok' %}<span class="badge audit-review-ok">Норма</span>{% endif %}{% endmacro %}
+{% macro when(iso) %}<time class="mono" datetime="{{ iso }}">{{ iso[:16]|replace('T', ' ') }}</time>{% endmacro %}
 
 {% if view == 'record' %}
-<p><a href="{{ url(**{'period': f.period}) }}">← К журналу запросов</a></p>
+<p><a href="{{ url(**{'period': f.period}) }}">← К ленте</a></p>
 {% if record is none %}
 <div class="alert alert-warn">Запись не найдена (возможно, удалена по сроку хранения).</div>
 {% else %}
-<p class="section-title">Запрос №{{ record.id }} — {{ kind_labels.get(record.kind, record.kind) }}</p>
+<div class="llm-toolbar">
+  <p class="section-title">Запрос №{{ record.id }} — {{ kind_labels.get(record.kind, record.kind) }}</p>
+  <form method="post" action="{{ url(action='review', view='record', id=record.id) }}" class="audit-review-buttons">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn btn-small{{ ' is-on' if record.review == 'ok' else '' }}" name="one" value="{{ record.id }}:ok">Норма</button>
+    <button class="btn btn-small btn-danger{{ ' is-on' if record.review == 'incident' else '' }}" name="one" value="{{ record.id }}:incident">Инцидент</button>
+    {% if record.review %}<button class="btn btn-small" name="one" value="{{ record.id }}:">Снять отметку</button>{% endif %}
+  </form>
+</div>
 <dl class="kv">
   <dt>Время (UTC)</dt><dd class="mono">{{ record.created_at }}</dd>
   <dt>Пользователь</dt><dd><a href="{{ url(view='user', user=record.owner_key) }}">{{ record.owner_key }}</a></dd>
   <dt>Нейросеть и модель</dt><dd>{{ record.provider_name or '—' }} · {{ record.model_name or '—' }}{% if record.fallback_from %} <span class="muted">(резерв вместо «{{ record.fallback_from }}»)</span>{% endif %}</dd>
   <dt>Диалог</dt><dd>{% if record.conversation_id %}<a href="{{ url(view='conversation', id=record.conversation_id) }}">№{{ record.conversation_id }}</a>{% else %}—{% endif %}{% if record.project_id %} · проект №{{ record.project_id }}{% endif %}</dd>
+  <dt>DLP</dt><dd>{% for h in record.dlp %}{{ sev_badge(h.severity, h.name ~ ' · ' ~ h.hits) }} {% else %}срабатываний нет{% endfor %}</dd>
+  <dt>Разбор</dt><dd>{% if record.review %}{{ review_badge(record.review) }} <span class="muted">{{ record.reviewed_by }}, {{ record.reviewed_at[:16]|replace('T', ' ') }}</span>{% else %}не разобрана{% endif %}</dd>
   <dt>Обезличивание</dt><dd>{% if record.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% else %}обезличено{% endif %}</dd>
   <dt>Вложения</dt><dd>{% if record.attachment_count %}{{ record.attachment_count }} ({{ record.attachment_types }}){% else %}нет{% endif %}</dd>
   <dt>Токены</dt><dd class="mono">{{ record.tokens }} (вход {{ record.input_tokens if record.input_tokens is not none else '—' }}, выход {{ record.output_tokens if record.output_tokens is not none else '—' }})</dd>
@@ -19,16 +32,16 @@
   <dt>Результат</dt><dd>{{ outcome(record.outcome) }}</dd>
 </dl>
 <p class="section-title">Текст, ушедший во внешнюю нейросеть ({{ record.text_chars }} симв.)</p>
-{% if record.text %}<pre class="tele-text">{{ record.text }}</pre>{% else %}<p class="muted">Текст не сохраняется для служебных запросов (сводки, состояние проекта) — их содержание составлено из уже обезличенной истории.</p>{% endif %}
+{% if record.text %}<pre class="tele-text">{{ marked }}</pre>{% else %}<p class="muted">Текст не сохраняется для служебных запросов (сводки, состояние проекта) — их содержание составлено из уже обезличенной истории.</p>{% endif %}
 {% endif %}
 
 {% elif view == 'user' %}
-<p><a href="{{ url(**{'period': f.period}) }}">← К журналу запросов</a></p>
+<p><a href="{{ url(**{'period': f.period}) }}">← К ленте</a></p>
 <div class="llm-toolbar">
   <p class="section-title">Диалоги пользователя {{ owner }}</p>
-  <a class="btn btn-small" href="{{ url(user=owner, period='30') }}">Запросы пользователя за 30 дней</a>
+  <a class="btn btn-small" href="{{ url(user=owner, period='30') }}">Отправленное за 30 дней</a>
 </div>
-<p class="muted">Только чтение. Показано то, что хранится в истории пользователя (обезличенный текст); удалённые им диалоги здесь не видны — они остаются только в журнале запросов.</p>
+<p class="muted">Только чтение. Показано то, что хранится в истории пользователя (обезличенный текст); удалённые им диалоги здесь не видны — они остаются в ленте аудита.</p>
 <div class="llm-table-wrap"><table class="data-table">
   <thead><tr><th>Диалог</th><th>Проект</th><th>Создан</th><th>Обновлён</th><th>Сообщений</th><th>Токены</th></tr></thead>
   <tbody>
@@ -50,7 +63,7 @@
 
 {% elif view == 'conversation' %}
 {% if conv is none %}
-<p><a href="{{ url() }}">← К журналу запросов</a></p>
+<p><a href="{{ url() }}">← К ленте</a></p>
 <div class="alert alert-warn">Диалог не найден (пользователь мог его удалить).</div>
 {% else %}
 <p><a href="{{ url(view='user', user=conv.owner_key) }}">← К диалогам {{ conv.owner_key }}</a></p>
@@ -74,70 +87,229 @@
 {% endif %}
 
 {% else %}
-<p class="muted llm-lead">
-  Журнал всего, что уходило во внешние нейросети: кто, когда, какой моделью, сколько токенов и точный текст сообщения
-  в том виде, в каком он ушёл. Журнал не зависит от удаления диалогов пользователями. Каждый просмотр записи,
-  переписки пользователя и каждая выгрузка фиксируются в административном аудите.
-</p>
+<div class="llm-toolbar log-tabs">
+  <nav class="log-tab-links" aria-label="Вкладки раздела">
+{% for key, label in tabs.items() %}
+    <a class="btn btn-small {{ 'btn-primary' if tab == key else '' }}" href="{{ url(tab=key if key != 'feed' else '', period=f.period if key != 'rules' else '') }}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>
+{% endfor %}
+  </nav>
+</div>
 
+{% if tab == 'feed' %}
+<form method="get" action="index.php" class="audit-search">
+  <input type="hidden" name="section" value="telemetry">
+  {% for k in ('sev', 'review', 'unanon') %}{% if args.get(k) %}<input type="hidden" name="{{ k }}" value="{{ args[k] }}">{% endif %}{% endfor %}
+  <div class="audit-search-main">
+    <div class="field audit-search-q">
+      <label class="field-label" for="tele_q">Поиск по тексту</label>
+      <input class="text-input" type="search" id="tele_q" name="q" value="{{ f.q }}" placeholder="слова, &quot;точная фраза&quot;, -исключить" autocomplete="off">
+    </div>
+    <div class="field">
+      <label class="field-label" for="tele_period">Период</label>
+      <select class="text-input" id="tele_period" name="period">
+{% for value, label in periods.items() %}
+        <option value="{{ value }}" {{ 'selected' if f.period == value else '' }}>{{ label }}</option>
+{% endfor %}
+      </select>
+    </div>
+    <div class="field log-filter-submit">
+      <button class="btn btn-primary" type="submit">Найти</button>
+    </div>
+  </div>
+  <details class="audit-more"{% if more_open %} open{% endif %}>
+    <summary>Ещё фильтры</summary>
+    <div class="audit-more-grid">
+      <div class="field">
+        <label class="field-label" for="tele_user">Пользователь</label>
+        <input class="text-input" id="tele_user" name="user" value="{{ f.owner_key }}" placeholder="начало логина">
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_rule">Правило DLP</label>
+        <select class="text-input" id="tele_rule" name="rule">
+          <option value="">Любое</option>
+{% for r in all_rules %}
+          <option value="{{ r.id }}" {{ 'selected' if f.rule_id == r.id else '' }}>{{ r.name }}</option>
+{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_model">Модель</label>
+        <select class="text-input" id="tele_model" name="model">
+          <option value="">Все модели</option>
+{% for name in models %}
+          <option value="{{ name }}" {{ 'selected' if f.model_name == name else '' }}>{{ name }}</option>
+{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_kind">Тип запроса</label>
+        <select class="text-input" id="tele_kind" name="kind">
+          <option value="">Все типы</option>
+{% for value, label in kind_labels.items() %}
+          <option value="{{ value }}" {{ 'selected' if f.kind == value else '' }}>{{ label }}</option>
+{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_from">С даты (свой период)</label>
+        <input class="text-input" type="date" id="tele_from" name="from" value="{{ f.from }}">
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_to">По дату</label>
+        <input class="text-input" type="date" id="tele_to" name="to" value="{{ f.to }}">
+      </div>
+      <div class="field">
+        <label class="field-label" for="tele_per">На странице</label>
+        <select class="text-input" id="tele_per" name="per">
+{% for n in per_page %}
+          <option value="{{ n }}" {{ 'selected' if f.per == n else '' }}>{{ n }}</option>
+{% endfor %}
+        </select>
+      </div>
+    </div>
+  </details>
+</form>
+
+<nav class="audit-presets" aria-label="Быстрые фильтры">
+{% for label, p_args, count, tone in presets %}
+  <a class="audit-preset{{ ' is-active' if p_args == args else '' }}{{ ' tone-' ~ tone if tone and count else '' }}" href="{{ url(**p_args) }}"{% if p_args == args %} aria-current="true"{% endif %}>
+    {{ label }} <span class="audit-preset-count">{{ '{:,}'.format(count).replace(',', ' ') }}</span>
+  </a>
+{% endfor %}
+</nav>
+
+<form method="post" action="{{ review_url }}" class="audit-feed-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="audit-bar">
+    <label class="llm-inline-check audit-check-all"><input type="checkbox" data-check-all aria-label="Выбрать все записи на странице"> Все на странице</label>
+    <span class="audit-bar-actions">
+      <span class="muted">Отметить выбранные:</span>
+      <button class="btn btn-small" name="status" value="ok">Норма</button>
+      <button class="btn btn-small btn-danger" name="status" value="incident">Инцидент</button>
+    </span>
+    <span class="audit-bar-meta muted">Найдено: {{ '{:,}'.format(result.total).replace(',', ' ') }}{% if total_pages > 1 %} · стр. {{ num }} из {{ total_pages }}{% endif %}</span>
+    <a class="btn btn-small" href="{{ export_url }}">Скачать CSV</a>
+  </div>
+
+  <ol class="audit-feed">
+{% for r in result.rows %}
+    <li class="audit-entry{{ ' sev-' ~ r.dlp_severity if r.dlp_severity else '' }}{{ ' is-reviewed' if r.review else '' }}">
+      <label class="audit-entry-check"><input type="checkbox" name="ids[]" value="{{ r.id }}" aria-label="Выбрать запись №{{ r.id }}"></label>
+      <div class="audit-entry-body">
+        <div class="audit-entry-head">
+          <a class="audit-user" href="{{ url(**dict(args, user=r.owner_key)) }}" title="Всё отправленное этим пользователем">{{ r.owner_key }}</a>
+          {{ when(r.created_at) }}
+          <span class="muted">{{ r.model_name or '—' }}{% if r.fallback_from %} · резерв{% endif %}</span>
+          {% if r.kind != 'chat' %}<span class="muted">{{ kind_labels.get(r.kind, r.kind) }}</span>{% endif %}
+          {% if r.outcome != 'ok' %}{{ outcome(r.outcome) }}{% endif %}
+          <span class="audit-links"><a href="{{ url(view='record', id=r.id, q=f.q) }}">Карточка</a>{% if r.conversation_id %} · <a href="{{ url(view='conversation', id=r.conversation_id) }}">Диалог</a>{% endif %}</span>
+        </div>
+        {% if r.dlp or r.unanonymized or r.attachment_count or r.review %}
+        <div class="audit-entry-tags">
+          {{ review_badge(r.review) }}
+          {% for h in r.dlp %}<a class="badge audit-sev audit-sev-{{ h.severity }}" href="{{ url(**dict(args, rule=h.rule_id)) }}" title="{{ severities[h.severity] }} · совпадений: {{ h.hits }}">{{ h.name }}</a>{% endfor %}
+          {% if r.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% endif %}
+          {% if r.attachment_count %}<span class="badge badge-inactive">вложений: {{ r.attachment_count }}</span>{% endif %}
+        </div>
+        {% endif %}
+        {% if r.text %}
+        <p class="audit-snippet">{{ r.snippet }}</p>
+        {% if r.cut %}
+        <details class="audit-full">
+          <summary>Весь текст · {{ '{:,}'.format(r.text_chars).replace(',', ' ') }} симв.</summary>
+          <pre class="tele-text">{{ r.full }}</pre>
+          {% if r.full_cut %}<p class="muted">Показано {{ '{:,}'.format(50000).replace(',', ' ') }} символов — полностью в <a href="{{ url(view='record', id=r.id, q=f.q) }}">карточке записи</a>.</p>{% endif %}
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="audit-snippet muted">Служебный запрос: текст составлен из уже обезличенной истории и не хранится.</p>
+        {% endif %}
+      </div>
+      <div class="audit-entry-actions">
+        <button class="btn btn-small{{ ' is-on' if r.review == 'ok' else '' }}" name="one" value="{{ r.id }}:{{ '' if r.review == 'ok' else 'ok' }}" aria-pressed="{{ 'true' if r.review == 'ok' else 'false' }}">Норма</button>
+        <button class="btn btn-small btn-danger{{ ' is-on' if r.review == 'incident' else '' }}" name="one" value="{{ r.id }}:{{ '' if r.review == 'incident' else 'incident' }}" aria-pressed="{{ 'true' if r.review == 'incident' else 'false' }}">Инцидент</button>
+      </div>
+    </li>
+{% endfor %}
+  </ol>
+{% if not result.rows %}
+  <div class="audit-empty">
+    <p class="section-title">Ничего не найдено</p>
+    <p class="muted">{% if f.q %}По запросу «{{ f.q }}» за выбранный период записей нет. Поиск идёт по началу слов; попробуйте короче или расширьте период.{% else %}За выбранный период и фильтры записей нет.{% endif %}</p>
+  </div>
+{% endif %}
+</form>
+
+{% if total_pages > 1 %}
+<nav class="pager" aria-label="Страницы ленты">
+  <a class="btn btn-small{{ ' muted' if num <= 1 else '' }}" href="{{ prev_url }}"{% if num <= 1 %} aria-disabled="true" tabindex="-1"{% endif %}>← Назад</a>
+  <span class="muted">Страница {{ num }} из {{ total_pages }}</span>
+  <a class="btn btn-small{{ ' muted' if num >= total_pages else '' }}" href="{{ next_url }}"{% if num >= total_pages %} aria-disabled="true" tabindex="-1"{% endif %}>Вперёд →</a>
+</nav>
+{% endif %}
+<p class="muted llm-note audit-footnote">Время — UTC. В ленте — точный текст, ушедший во внешние нейросети (после обезличивания). Каждый просмотр страницы ленты, карточки, переписки, выгрузка и отметка записей пишутся в административный аудит.</p>
+
+{% elif tab == 'overview' %}
 <form method="get" action="index.php" class="form-row log-filter-row">
   <input type="hidden" name="section" value="telemetry">
+  <input type="hidden" name="tab" value="overview">
   <div class="field">
-    <label class="field-label" for="tele_period">Период</label>
-    <select class="text-input" id="tele_period" name="period">
+    <label class="field-label" for="ov_period">Период</label>
+    <select class="text-input" id="ov_period" name="period" data-autosubmit>
 {% for value, label in periods.items() %}
       <option value="{{ value }}" {{ 'selected' if f.period == value else '' }}>{{ label }}</option>
 {% endfor %}
     </select>
   </div>
-  <div class="field">
-    <label class="field-label" for="tele_from">С даты (для своего периода)</label>
-    <input class="text-input" type="date" id="tele_from" name="from" value="{{ f.from }}">
-  </div>
-  <div class="field">
-    <label class="field-label" for="tele_to">По дату</label>
-    <input class="text-input" type="date" id="tele_to" name="to" value="{{ f.to }}">
-  </div>
-  <div class="field">
-    <label class="field-label" for="tele_user">Пользователь</label>
-    <input class="text-input" id="tele_user" name="user" value="{{ f.owner_key }}" placeholder="ivanov@corp.local">
-  </div>
-  <div class="field">
-    <label class="field-label" for="tele_model">Модель</label>
-    <select class="text-input" id="tele_model" name="model">
-      <option value="">Все модели</option>
-{% for name in models %}
-      <option value="{{ name }}" {{ 'selected' if f.model_name == name else '' }}>{{ name }}</option>
-{% endfor %}
-    </select>
-  </div>
-  <div class="field">
-    <label class="field-label" for="tele_kind">Тип запроса</label>
-    <select class="text-input" id="tele_kind" name="kind">
-      <option value="">Все типы</option>
-{% for value, label in kind_labels.items() %}
-      <option value="{{ value }}" {{ 'selected' if f.kind == value else '' }}>{{ label }}</option>
-{% endfor %}
-    </select>
-  </div>
-  <div class="field">
-    <label class="field-label" for="tele_q">Поиск по тексту</label>
-    <input class="text-input" id="tele_q" name="q" value="{{ f.q }}" placeholder="слово из сообщения">
-  </div>
-  <div class="field log-filter-submit">
-    <label class="llm-inline-check"><input type="checkbox" name="unanon" value="1" {{ 'checked' if f.unanonymized else '' }}> Только без обезличивания</label>
-  </div>
-  <div class="field log-filter-submit">
-    <button class="btn btn-primary" type="submit">Показать</button>
-  </div>
+  <div class="field"><label class="field-label" for="ov_from">С даты</label><input class="text-input" type="date" id="ov_from" name="from" value="{{ f.from }}"></div>
+  <div class="field"><label class="field-label" for="ov_to">По дату</label><input class="text-input" type="date" id="ov_to" name="to" value="{{ f.to }}"></div>
+  <div class="field log-filter-submit"><button class="btn btn-primary" type="submit">Показать</button></div>
 </form>
-
+{% set tot = overview.totals %}
+{% set p = {'period': f.period, 'from': f.from, 'to': f.to} %}
+<p class="section-title">DLP</p>
 <div class="grid tele-totals">
-  <div class="stat-tile"><div class="label">Запросов</div><div class="value">{{ overview.totals.requests }}</div></div>
-  <div class="stat-tile"><div class="label">Токенов</div><div class="value">{{ '{:,}'.format(overview.totals.tokens).replace(',', ' ') }}</div></div>
-  <div class="stat-tile"><div class="label">Пользователей</div><div class="value">{{ overview.totals.users }}</div></div>
-  <div class="stat-tile"><div class="label">Без обезличивания</div><div class="value {{ 'status-warn' if overview.totals.unanonymized else '' }}">{{ overview.totals.unanonymized }}</div></div>
-  <div class="stat-tile"><div class="label">Ошибок</div><div class="value {{ 'status-bad' if overview.totals.errors else '' }}">{{ overview.totals.errors }}</div></div>
+  <a class="stat-tile audit-tile" href="{{ url(**dict(p, sev=1)) }}"><span class="label">Срабатываний</span><span class="value">{{ tot.flagged }}</span></a>
+  <a class="stat-tile audit-tile" href="{{ url(**dict(p, sev=3)) }}"><span class="label">Критичных</span><span class="value {{ 'status-bad' if tot.critical else '' }}">{{ tot.critical }}</span></a>
+  <a class="stat-tile audit-tile" href="{{ url(**dict(p, review='todo')) }}"><span class="label">Не разобрано</span><span class="value {{ 'status-warn' if tot.todo else '' }}">{{ tot.todo }}</span></a>
+  <a class="stat-tile audit-tile" href="{{ url(**dict(p, review='incident')) }}"><span class="label">Инцидентов</span><span class="value {{ 'status-bad' if tot.incidents else '' }}">{{ tot.incidents }}</span></a>
+  <a class="stat-tile audit-tile" href="{{ url(**dict(p, unanon='1')) }}"><span class="label">Без обезличивания</span><span class="value {{ 'status-warn' if tot.unanonymized else '' }}">{{ tot.unanonymized }}</span></a>
+</div>
+<p class="section-title">Использование</p>
+<div class="grid tele-totals">
+  <a class="stat-tile audit-tile" href="{{ url(**p) }}"><span class="label">Запросов</span><span class="value">{{ tot.requests }}</span></a>
+  <div class="stat-tile"><span class="label">Пользователей</span><span class="value">{{ tot.users }}</span></div>
+  <div class="stat-tile"><span class="label">Токенов</span><span class="value">{{ '{:,}'.format(tot.tokens).replace(',', ' ') }}</span></div>
+  <div class="stat-tile"><span class="label">Ошибок</span><span class="value {{ 'status-bad' if tot.errors else '' }}">{{ tot.errors }}</span></div>
+</div>
+
+<div class="grid grid-2 tele-tops">
+  <section class="tele-top">
+    <p class="section-title">Срабатывания по правилам</p>
+    <div class="llm-table-wrap"><table class="data-table">
+      <thead><tr><th>Правило</th><th>Записей</th><th>Пользователей</th></tr></thead>
+      <tbody>
+{% for r in overview.by_rule %}
+        <tr><td class="cell-wrap">{{ sev_badge(r.severity, '') }} <a href="{{ url(**dict(p, rule=r.id)) }}">{{ r.name }}</a></td><td class="mono">{{ r.records }}</td><td class="mono">{{ r.users }}</td></tr>
+{% else %}
+        <tr><td colspan="3" class="muted">Срабатываний за период нет.</td></tr>
+{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="tele-top">
+    <p class="section-title">Пользователи со срабатываниями</p>
+    <div class="llm-table-wrap"><table class="data-table">
+      <thead><tr><th>Пользователь</th><th>Записей</th><th>Критичных</th><th>Не разобрано</th></tr></thead>
+      <tbody>
+{% for r in overview.top_dlp %}
+        <tr><td class="cell-wrap"><a href="{{ url(**dict(p, user=r.name, sev=1)) }}">{{ r.name }}</a></td><td class="mono">{{ r.records }}</td><td class="mono {{ 'status-bad' if r.critical else '' }}">{{ r.critical }}</td><td class="mono">{{ r.todo }}</td></tr>
+{% else %}
+        <tr><td colspan="4" class="muted">Нет данных за период.</td></tr>
+{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
 </div>
 
 <div class="grid grid-3 tele-tops">
@@ -153,60 +325,142 @@
           <td class="mono">{{ r[first] }}</td>
           <td class="mono">{{ r.requests if first == 'tokens' else r.tokens }}</td>
         </tr>
-{% endfor %}
-{% if not rows %}
+{% else %}
         <tr><td colspan="3" class="muted">Нет данных за период.</td></tr>
-{% endif %}
+{% endfor %}
       </tbody>
     </table></div>
   </section>
 {% endfor %}
 </div>
 
+{% else %}
+{# ---- правила DLP и хранение ---- #}
 <div class="llm-toolbar">
-  <p class="section-title">Запросы к внешним нейросетям</p>
-  <a class="btn btn-small" href="{{ export_url }}">Скачать CSV</a>
+  <p class="section-title">Правила DLP</p>
+  <a class="btn btn-small btn-primary" href="{{ url(tab='rules', edit='new') }}#rule-form">Добавить правило</a>
 </div>
-<p class="muted">Найдено: {{ result.total }}. Страница {{ num }} из {{ total_pages }}.</p>
-<div class="llm-table-wrap"><table class="data-table tele-log">
-  <thead><tr><th>Время (UTC)</th><th>Пользователь</th><th>Тип</th><th>Модель</th><th>Токены</th><th>Результат</th><th></th></tr></thead>
+<p class="muted llm-lead">Каждое сообщение проверяется правилами в момент отправки; совпадения подсвечиваются в ленте, по ним работают быстрые фильтры. После правки правила журнал за 7 дней перепроверяется автоматически в фоне.</p>
+<div class="llm-table-wrap"><table class="data-table audit-rules">
+  <thead><tr><th>Вкл.</th><th>Правило</th><th>Важность</th><th>Вид</th><th>За 30 дней</th><th></th></tr></thead>
   <tbody>
-{% for r in result.rows %}
-    <tr>
-      <td class="mono">{{ r.created_at[:16]|replace('T', ' ') }}</td>
-      <td class="cell-wrap"><a href="{{ url(view='user', user=r.owner_key) }}">{{ r.owner_key }}</a>{% if r.unanonymized %} <span class="badge tele-badge-raw">без обезличивания</span>{% endif %}</td>
-      <td>{{ kind_labels.get(r.kind, r.kind) }}{% if r.attachment_count %} <span class="muted meta">+{{ r.attachment_count }} влож.</span>{% endif %}</td>
-      <td class="tele-model">{{ r.model_name or '—' }}{% if r.fallback_from %} <span class="muted meta">резерв</span>{% endif %}</td>
-      <td class="mono">{{ r.tokens }}</td>
-      <td>{{ outcome(r.outcome) }}</td>
-      <td><a class="btn btn-small" href="{{ url(view='record', id=r.id) }}">Открыть</a></td>
+{% for r in rules %}
+    <tr class="{{ '' if r.is_enabled else 'is-off' }}">
+      <td>
+        <form method="post" action="{{ url(tab='rules', action='rule_toggle') }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="rule_id" value="{{ r.id }}">
+          <button class="audit-toggle" type="submit" role="switch" aria-checked="{{ 'true' if r.is_enabled else 'false' }}" aria-label="{{ 'Выключить' if r.is_enabled else 'Включить' }} правило «{{ r.name }}»"><span class="track"></span></button>
+        </form>
+      </td>
+      <td class="cell-wrap"><strong>{{ r.name }}</strong>{% if r.builtin_key %} <span class="muted meta">встроенный</span>{% endif %}</td>
+      <td>{{ sev_badge(r.severity) }}</td>
+      <td class="muted">{{ rule_kinds.get(r.kind, r.kind) }}</td>
+      <td class="mono">{% if hits.get(r.id) %}<a href="{{ url(period='30', rule=r.id) }}">{{ hits[r.id] }}</a>{% else %}0{% endif %}</td>
+      <td class="audit-rule-actions">
+        <a class="btn btn-small" href="{{ url(tab='rules', edit=r.id) }}#rule-form">Изменить</a>
+        {% if not r.builtin_key %}
+        <form method="post" action="{{ url(tab='rules', action='rule_delete') }}" data-confirm-title="Удалить правило?" data-confirm-text="Правило «{{ r.name }}» будет удалено, его срабатывания в журнале сняты.">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="rule_id" value="{{ r.id }}">
+          <button class="btn btn-small btn-danger" type="submit">Удалить</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
 {% endfor %}
-{% if not result.rows %}
-    <tr><td colspan="7" class="muted">Запросов не найдено.</td></tr>
-{% endif %}
   </tbody>
 </table></div>
 
-{% if total_pages > 1 %}
-<nav class="pager" aria-label="Страницы журнала запросов">
-  <a class="btn btn-small{{ ' muted' if num <= 1 else '' }}" href="{{ prev_url }}"{% if num <= 1 %} aria-disabled="true" tabindex="-1"{% endif %}>← Назад</a>
-  <span class="muted">Страница {{ num }} из {{ total_pages }}</span>
-  <a class="btn btn-small{{ ' muted' if num >= total_pages else '' }}" href="{{ next_url }}"{% if num >= total_pages %} aria-disabled="true" tabindex="-1"{% endif %}>Вперёд →</a>
-</nav>
+{% if edit %}
+<section class="llm-card audit-card audit-rule-form" id="rule-form">
+  <p class="section-title">{{ 'Изменить правило' if edit.id else 'Новое правило' }}{% if edit.builtin_key %} <span class="muted meta">встроенный шаблон</span>{% endif %}</p>
+  <form method="post" action="{{ url(tab='rules', action='rule_save') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if edit.id %}<input type="hidden" name="rule_id" value="{{ edit.id }}">{% endif %}
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label" for="rule_name">Название</label>
+        <input class="text-input{{ ' has-error' if errors.name else '' }}" id="rule_name" name="name" value="{{ edit.name }}" maxlength="100" required>
+        {% if errors.name %}<p class="field-error">{{ errors.name }}</p>{% endif %}
+      </div>
+      <div class="field">
+        <label class="field-label" for="rule_kind">Вид</label>
+        <select class="text-input" id="rule_kind" name="kind">
+{% for k, label in rule_kinds.items() %}
+          <option value="{{ k }}" {{ 'selected' if edit.kind == k else '' }}>{{ label }}</option>
+{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="rule_sev">Важность</label>
+        <select class="text-input" id="rule_sev" name="severity">
+{% for level, label in severities.items() %}
+          <option value="{{ level }}" {{ 'selected' if edit.severity == level else '' }}>{{ label }}</option>
+{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="rule_pattern">Шаблон — по одному в строке</label>
+      <textarea class="text-input audit-pattern{{ ' has-error' if errors.pattern else '' }}" id="rule_pattern" name="pattern" rows="8" spellcheck="false">{{ edit.pattern }}</textarea>
+      {% if errors.pattern %}<p class="field-error">{{ errors.pattern }}</p>{% endif %}
+      <p class="muted llm-note"><strong>Слова и фразы:</strong> каждое слово совпадает по началу — «коммерческ тайн» найдёт «коммерческой тайны»; регистр и ё/е не важны. <strong>Регулярные выражения:</strong> синтаксис Python, без учёта регистра; совпадение любой строки.</p>
+    </div>
+    <label class="llm-inline-check"><input type="checkbox" name="is_enabled" value="1" {{ 'checked' if edit.is_enabled else '' }}> Правило включено</label>
+    <div class="llm-actions">
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+      <a class="btn" href="{{ url(tab='rules') }}">Отмена</a>
+    </div>
+  </form>
+</section>
 {% endif %}
 
-<hr class="sep">
-<p class="section-title">Хранение</p>
-<form method="post" action="index.php?section=telemetry&action=save_retention">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <div class="form-row">
+<section class="llm-card audit-card" id="rule-test">
+  <p class="section-title">Проверить на тексте</p>
+  <form method="post" action="{{ url(tab='rules', action='rule_test') }}#rule-test">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="field">
-      <label class="field-label" for="telemetry_retention_days">Хранить телеметрию, дней (0 — бессрочно){{ setting_code('TELEMETRY_RETENTION_DAYS') }}</label>
-      <input class="text-input" type="number" min="0" max="3650" id="telemetry_retention_days" name="telemetry_retention_days" value="{{ retention }}">
+      <label class="field-label" for="rule_sample">Текст для проверки включёнными правилами (никуда не сохраняется)</label>
+      <textarea class="text-input" id="rule_sample" name="sample" rows="4">{{ test.sample if test else '' }}</textarea>
     </div>
+    <div class="llm-actions"><button class="btn" type="submit">Проверить</button></div>
+  </form>
+  {% if test %}
+  <div class="audit-test-result" role="status">
+    {% if test.found %}
+    <p>{% for rule, n in test.found %}{{ sev_badge(rule.severity, rule.name ~ ' · ' ~ n) }} {% endfor %}</p>
+    <pre class="tele-text">{{ test.marked }}</pre>
+    {% else %}
+    <p class="muted">Ни одно включённое правило не сработало.</p>
+    {% endif %}
   </div>
-  <p class="muted llm-note">Записи старше срока удаляются автоматически раз в час. Удаление диалогов пользователями на журнал не влияет.</p>
-  <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button></div>
-</form>
+  {% endif %}
+</section>
+
+<section class="llm-card audit-card">
+  <p class="section-title">Перепроверить журнал</p>
+  <p class="muted">Нужно после правки правил, если хотите проверить записи старше 7 дней. Идёт в фоне порциями и не мешает пользователям.</p>
+  {% if rescan_left %}<p class="status-warn" role="status">Идёт перепроверка: осталось {{ '{:,}'.format(rescan_left).replace(',', ' ') }} записей.</p>{% endif %}
+  <form method="post" action="{{ url(tab='rules', action='rescan') }}" class="llm-actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+{% for days, label in rescan_days.items() %}
+    <button class="btn btn-small" name="days" value="{{ days }}">{{ label }}</button>
+{% endfor %}
+  </form>
+</section>
+
+<section class="llm-card audit-card">
+  <p class="section-title">Хранение</p>
+  <form method="post" action="{{ url(tab='rules', action='save_retention') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label" for="telemetry_retention_days">Хранить журнал аудита, дней (0 — бессрочно){{ setting_code('TELEMETRY_RETENTION_DAYS') }}</label>
+        <input class="text-input" type="number" min="0" max="3650" id="telemetry_retention_days" name="telemetry_retention_days" value="{{ retention }}">
+      </div>
+    </div>
+    <p class="muted llm-note">Записи старше срока удаляются автоматически раз в час вместе с поисковым индексом и срабатываниями. Удаление диалогов пользователями на журнал не влияет.</p>
+    <div class="llm-actions"><button class="btn btn-primary" type="submit">Сохранить</button></div>
+  </form>
+</section>
+{% endif %}
 {% endif %}

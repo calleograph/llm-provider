@@ -141,10 +141,14 @@
     this.releaseMic();
     this.setPhase('finishing');
     var p = new Promise(function (resolve) { self.done = resolve; });
+    this.settling = p;
     try { if (this.ws) { this.ws.send(JSON.stringify({ type: 'stop' })); } else { this.finish(false); } } catch (e) { this.finish(false); }
     global.setTimeout(function () { if (!self.finished) { self.fail('Распознавание не ответило вовремя — уже распознанный текст в поле ввода'); } }, 40000);
     return p;
   };
+
+  /** Дождаться конца уже начатой остановки (фаза «finishing»); иначе — сразу. */
+  Dictation.prototype.settled = function () { return this.phase === 'finishing' && this.settling ? this.settling : Promise.resolve(); };
 
   /** Отменить: распознанное до этого остаётся в поле, новые фрагменты не придут. */
   Dictation.prototype.cancel = function () {

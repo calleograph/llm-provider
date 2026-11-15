@@ -330,4 +330,37 @@ STEPS: list[tuple[str, ...]] = [
 )"""),
     ("sql", """CREATE INDEX IF NOT EXISTS idx_llm_outbound_created ON llm_outbound(created_at)"""),
     ("sql", """CREATE INDEX IF NOT EXISTS idx_llm_outbound_owner ON llm_outbound(owner_key, created_at)"""),
+    # Аудит и DLP (llmp/chat/dlp.py): важность срабатывания и разбор записи администратором.
+    ("column", "llm_outbound", "dlp_severity INTEGER NOT NULL DEFAULT 0"),
+    ("column", "llm_outbound", "review TEXT NOT NULL DEFAULT ''"),
+    ("column", "llm_outbound", "reviewed_by TEXT"),
+    ("column", "llm_outbound", "reviewed_at TEXT"),
+    ("sql", """CREATE INDEX IF NOT EXISTS idx_llm_outbound_dlp ON llm_outbound(dlp_severity, created_at) WHERE dlp_severity > 0"""),
+    ("sql", """CREATE TABLE IF NOT EXISTS dlp_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    severity INTEGER NOT NULL DEFAULT 2,
+    is_enabled INTEGER NOT NULL DEFAULT 1,
+    builtin_key TEXT UNIQUE,
+    position INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)"""),
+    ("sql", """CREATE TABLE IF NOT EXISTS llm_outbound_dlp (
+    outbound_id INTEGER NOT NULL,
+    rule_id INTEGER NOT NULL,
+    hits INTEGER NOT NULL,
+    PRIMARY KEY (outbound_id, rule_id)
+) WITHOUT ROWID"""),
+    ("sql", """CREATE INDEX IF NOT EXISTS idx_llm_outbound_dlp_rule ON llm_outbound_dlp(rule_id, outbound_id)"""),
+    # полнотекстовый индекс без копии текста (текст хранится сжатым в llm_outbound.text_z); rowid = llm_outbound.id.
+    # contentless_delete нет в SQLite 3.40 образа — удаление командой 'delete' с исходным текстом и только для fts_indexed = 1.
+    ("column", "llm_outbound", "fts_indexed INTEGER NOT NULL DEFAULT 0"),
+    ("sql", """CREATE VIRTUAL TABLE IF NOT EXISTS llm_outbound_fts USING fts5(
+    text, content='', tokenize='unicode61 remove_diacritics 2'
+)"""),
+    ("seed", 'dlp_rules'),
+    ("seed", 'outbound_index'),
 ]

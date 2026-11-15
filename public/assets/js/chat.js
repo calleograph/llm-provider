@@ -938,6 +938,26 @@
     els.messages.hidden = false;
   }
 
+  /* Советы на экране нового чата: с каждым новым чатом — следующий, пока экран открыт — смена раз в 12 с.
+     Главный совет (первый: «одна тема — один чат») показывается через раз. Номер — в localStorage, без него — с начала. */
+  var tips = [], tipStep = 0, tipTimer = null;
+  try { tips = JSON.parse(els.empty.getAttribute('data-tips') || '[]'); } catch (e) { tips = []; }
+  try { tipStep = parseInt(localStorage.getItem('llm:tip'), 10) || 0; } catch (e) { tipStep = 0; }
+  function tipAt(step) { return step % 2 === 0 || tips.length < 2 ? tips[0] : tips[1 + ((step - 1) / 2) % (tips.length - 1)]; }
+  function showTip(advance) {
+    var el = $('emptyTip');
+    if (!el || !tips.length) return;
+    if (advance) {
+      tipStep += 1;
+      try { localStorage.setItem('llm:tip', String(tipStep)); } catch (e) { /* не запомнится */ }
+    }
+    el.textContent = tipAt(tipStep);
+    el.classList.remove('is-new'); void el.offsetWidth; el.classList.add('is-new');
+    clearInterval(tipTimer);
+    tipTimer = setInterval(function () { if (!els.empty.hidden && els.empty.offsetParent) showTip(true); }, 12000);
+  }
+  showTip(true);
+
   function newConversation(projectId) {
     convPrefs = { style: null, instructions: '' };
     state.currentId = null;
@@ -947,6 +967,7 @@
     clearMessages();
     els.emptyTitle.textContent = projectId ? 'Новый чат в проекте «' + ((projectById(projectId) || {}).name || '') + '»' : 'Чем помочь?';
     els.input.placeholder = projectId ? 'Новый чат в этом проекте' : 'Спросите что-нибудь';
+    showTip(true);
     setHeader('', projectId);
     selectProjectModel(projectId);
     renderLists();
@@ -1608,7 +1629,13 @@
   function send() {
     if (state.sending || !ready) return;
     if (dictation && ['starting', 'listening', 'finishing'].indexOf(dictation.phase) >= 0) {
-      toast('Сначала остановите запись и проверьте распознанный текст.');
+      // «Отправить» во время записи: запись останавливается, последняя фраза дораспознаётся — и сообщение уходит само
+      if (dictation.phase === 'starting' || dictation.sendAfter) return;
+      dictation.sendAfter = true;
+      (dictation.phase === 'listening' ? dictation.stop() : dictation.settled()).then(function () {
+        dictation.sendAfter = false;
+        send();
+      });
       return;
     }
     var text = els.input.value.trim();
@@ -1986,7 +2013,7 @@
       idle: 'Голосовой ввод: начать запись', starting: 'Подключаем микрофон…', listening: 'Остановить запись',
       finishing: 'Распознаём речь…', result: 'Голосовой ввод: записать ещё', error: 'Голосовой ввод: повторить'
     };
-    var texts = { starting: 'Подключаем микрофон…', listening: 'Говорите — текст появится в поле', finishing: 'Распознаём последнюю фразу…', result: 'Текст добавлен в поле — проверьте и отправьте сами' };
+    var texts = { starting: 'Подключаем микрофон…', listening: 'Говорите — текст появится в поле. Отправить — сразу остановит запись и отправит', finishing: 'Распознаём последнюю фразу…', result: 'Текст добавлен в поле — проверьте и отправьте' };
     var seen = {}, timer = null, startedAt = 0, hideTimer = null;
     function tick() {
       var s = Math.floor((Date.now() - startedAt) / 1000);
@@ -2002,12 +2029,12 @@
       clearTimeout(hideTimer);
       bar.hidden = phase === 'idle' && !message;
       barText.textContent = message || texts[phase] || '';
-      $('dictationStop').hidden = phase !== 'listening';
       $('dictationCancel').hidden = !(phase === 'listening' || phase === 'starting' || phase === 'finishing');
       if (phase === 'listening' && !timer) { startedAt = Date.now(); tick(); timer = setInterval(tick, 500); }
       if (phase !== 'listening' && phase !== 'finishing') { clearInterval(timer); timer = null; barTime.textContent = ''; }
       if (phase === 'result') hideTimer = setTimeout(function () { bar.hidden = true; }, 6000);
-      els.send.disabled = state.sending || !ready || phase === 'starting' || phase === 'listening' || phase === 'finishing';
+      // во время записи «Отправить» доступна: она останавливает запись и отправляет надиктованное (send)
+      els.send.disabled = state.sending || !ready || phase === 'starting' || phase === 'finishing';
     }
     dictation = new window.Dictation({
       ticket: function () { return request('POST', 'dictation_ticket', form({})); },
@@ -2028,7 +2055,6 @@
       els.input.focus();
       dictation.start();
     });
-    $('dictationStop').addEventListener('click', function () { dictation.stop(); });
     $('dictationCancel').addEventListener('click', function () { dictation.cancel(); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && (dictation.phase === 'listening' || dictation.phase === 'starting')) dictation.cancel();

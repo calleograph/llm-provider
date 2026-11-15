@@ -68,7 +68,7 @@ def _seed_default_limit_category(conn: sqlite3.Connection) -> None:
     period = get("llm_chat_limit_period")
     period = period if period in ("day", "week", "month", "none") else "day"
     raw = get("llm_chat_limit_tokens")
-    tokens = None if period == "none" else max(0, int(raw) if raw not in (None, "") else 50000)
+    tokens = None if period == "none" else max(0, int(raw) if raw not in (None, "") else 300000)
     now = now_iso()
     conn.execute(
         "INSERT INTO llm_limit_categories (name, period, tokens, storage_mb, is_default, created_at, updated_at) VALUES (?, ?, ?, 50, 1, ?, ?)",
@@ -91,7 +91,23 @@ def seed_default_models(conn: sqlite3.Connection) -> None:
     )
 
 
-SEEDS = {"default_limit_category": _seed_default_limit_category, "default_models": seed_default_models}
+def _seed_dlp_rules(conn: sqlite3.Connection) -> None:
+    from .chat.dlp import BUILTIN, seed_builtin
+    if conn.execute("SELECT COUNT(*) FROM dlp_rules WHERE builtin_key IS NOT NULL").fetchone()[0] < len(BUILTIN):
+        seed_builtin(conn)
+
+
+def _seed_outbound_index(conn: sqlite3.Connection) -> None:
+    """Записи телеметрии, сделанные до появления поиска и DLP, — в индекс один раз."""
+    if conn.execute("SELECT EXISTS (SELECT 1 FROM app_settings WHERE key = 'telemetry_index_version')").fetchone()[0]:
+        return
+    from .chat.telemetry import Telemetry
+    Telemetry(conn).reindex_all()
+    conn.execute("INSERT INTO app_settings (key, value) VALUES ('telemetry_index_version', '1') ON CONFLICT(key) DO NOTHING")
+
+
+SEEDS = {"default_limit_category": _seed_default_limit_category, "default_models": seed_default_models,
+         "dlp_rules": _seed_dlp_rules, "outbound_index": _seed_outbound_index}
 
 
 class transaction:

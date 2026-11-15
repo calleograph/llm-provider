@@ -107,3 +107,23 @@ def test_changing_provider_address_drops_the_stored_key():
     data["base_url"] = "https://attacker.example.com/v1"
     repo.update(pid, data, None, False)
     assert not repo.find(pid)["has_api_key"], "новый адрес — сохранённый ключ туда не отправится"
+
+
+def test_admitted_user_always_gets_only_the_base_model(env):
+    """Добавленному в чат доступна базовая модель (по умолчанию у нейросети по умолчанию) без отдельных прав; другие модели
+    этой нейросети и другие нейросети — только по явным правам."""
+    from llmp.llm.models import ModelRepository
+    from llmp.db import seed_default_models
+    seed_default_models(env.conn)
+    models = ModelRepository(env.conn)
+    base = models.default_for(env.compatible)
+    pricey = models.create({"provider_id": env.compatible, "model": "big", "display_name": "big", "context_window": 32000, "max_output_tokens": 512, "priority": 1, "is_enabled": 1, "fallback_ids": []})
+    ProviderRepository(env.conn).set_default(env.compatible)
+    g = env.group("Новые", [])
+    allowed = env.policy.allowed_providers([g], env.domain_id)
+    assert list(allowed) == [env.compatible] and allowed[env.compatible]["base_only"]
+    assert list(models.allowed_for(allowed)) == [base], "дорогая модель той же нейросети — не базовая"
+    env.policy.set_group_providers(g, [env.compatible])
+    assert sorted(models.allowed_for(env.policy.allowed_providers([g], env.domain_id))) == sorted([base, pricey])
+    disabled = env.group("Выключенная", [], enabled=False)
+    assert env.policy.allowed_providers([disabled], env.domain_id) == {}, "выключенный субъект базовую модель не получает"

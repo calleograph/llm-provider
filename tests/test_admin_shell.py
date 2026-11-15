@@ -7,6 +7,7 @@ import io
 import json
 import re
 import sys
+import time
 import zipfile
 
 import pytest
@@ -164,7 +165,7 @@ def test_password_change_validation(admin):
 
 
 # ---- разделы ----
-@pytest.mark.parametrize("section", ["status", "services", "access", "system", "maintenance", "log"])
+@pytest.mark.parametrize("section", ["status", "services", "access", "system", "maintenance", "log", "updates"])
 def test_sections_render(admin, section):
     r = admin.get(f"/admin/index.php?section={section}")
     assert r.status_code == 200
@@ -251,8 +252,7 @@ def test_system_settings_actions(admin):
 def test_site_theme_setting_and_html_attribute(admin):
     # по умолчанию «Стекло»; тема администратора попадает в data-site-theme на <html> всех страниц, неизвестная — отклоняется
     page = admin.get("/admin/index.php?section=system").text
-    assert '<html lang="ru" data-site-theme="glass">' in page and 'data-theme-btn="dark"' in page
-    assert 'data-theme-btn="corporate"' not in page                                  # тем две: «Стекло» и «Тёмная»
+    assert '<html lang="ru" data-site-theme="glass">' in page and "data-theme-switch" in page   # одна кнопка солнце/луна
     tok = csrf_of(page)
     r = admin.post("/admin/index.php?section=system&action=update_site_theme", data={"csrf": tok, "site_theme": "amber"})
     assert "Неизвестная тема оформления." in r.text and 'data-site-theme="glass"' in r.text
@@ -358,3 +358,54 @@ def test_login_form_defaults_to_local_admin_without_ad(admin):
     from fastapi.testclient import TestClient
     html = TestClient(admin.app).get("/admin/index.php").text
     assert '<option value="local" selected>' in html
+
+
+def test_updates_section_check_update_and_progress(admin, monkeypatch, tmp_path):
+    """«Обновление»: проверка показывает доступную версию и изменения, «Обновить» кладёт запрос помощнику, окно-терминал
+    дочитывает журнал частями с этапом «N из M», после успешного обновления прежняя «доступна версия» сбрасывается."""
+    x = tmp_path / "upd"
+    (x / "inbox").mkdir(parents=True)
+    monkeypatch.setenv("UPDATER_DIR", str(x))
+    monkeypatch.setenv("APP_VERSION", "2.0.0")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    (x / "helper.json").write_text(json.dumps({"at": now, "pid": 1}))
+    page = admin.get("/admin/index.php?section=updates").text
+    assert "Помощник обновлений" in page and "проверка ещё не выполнялась" in page and 'href="index.php?section=updates"' in page
+    tok = csrf_of(page)
+    r = admin.post("/admin/index.php?section=updates&action=helper_request", data={"csrf": tok, "helper_action": "update"})
+    assert "передан помощнику" in r.text and 'data-running="1"' in r.text
+    assert (x / "inbox" / "request.txt").read_text().startswith("action=update\n")
+    assert admin.get("/admin/index.php?section=updates&action=log").json()["state"] == "pending"
+    (x / "inbox" / "request.txt").unlink()
+    (x / "last-output.txt").write_text("Канал: релизы (теги vX.Y.Z)\nУстановлено: 2.0.0 · e41e33be597c (v2.0.0)\n"
+                                       "Доступно:    2.1.0 · 85ee5bd00000 (v2.1.0)\nНовые коммиты (2):\n  85ee5bd Аудит и DLP\n  70014b2 Проверка утечек\n")
+    (x / "status.json").write_text(json.dumps({"state": "done", "action": "check", "at": "2026-11-15T19:00:00Z", "message": ""}))
+    page = admin.get("/admin/index.php?section=updates").text
+    assert "Обновить проект до 2.1.0" in page and "версия 2.0.0 → 2.1.0" in page and "Что нового: 2 изменения" in page and "Аудит и DLP" in page
+    (x / "status.json").write_text(json.dumps({"state": "running", "action": "update", "at": "2026-11-15T19:01:00Z", "message": ""}))
+    (x / "live-output.txt").write_text("[1/19] Проверка окружения\n[5/19] Сборка образов\n")
+    page = admin.get("/admin/index.php?section=updates").text
+    assert 'data-running="1"' in page and "Идёт обновление" in page
+    assert re.search(r'value="update">\s*<button class="btn btn-primary" type="submit" disabled', page), "во время обновления кнопки неактивны"
+    d = admin.get("/admin/index.php?section=updates&action=log&offset=0").json()
+    assert d["running"] and (d["step"], d["steps"], d["step_name"]) == (5, 19, "Сборка образов") and "Сборка образов" in d["text"]
+    more = admin.get(f"/admin/index.php?section=updates&action=log&offset={d['offset']}").json()
+    assert more["text"] == "" and more["offset"] == d["offset"], "дочитывается только новое"
+    (x / "status.json").write_text(json.dumps({"state": "done", "action": "update", "at": "2026-11-15T19:05:00Z", "message": ""}))
+    (x / "history.jsonl").write_text('{"at":"2026-11-15T19:05:00Z","action":"update","result":"ok","from":"e41e33be597c","to":"85ee5bd00000","detail":""}\n'
+                                     '{"at":"2026-11-15T19:05:01Z","action":"update","result":"ok"}\n')
+    page = admin.get("/admin/index.php?section=updates").text
+    assert "Обновить проект до 2.1.0" not in page and 'data-running="0"' in page
+    assert "e41e33be597c → 85ee5bd00000" in page and page.count("badge badge-active\">успешно") == 1, "в истории — записи update.sh, без дублей помощника"
+    maint = admin.get("/admin/index.php?section=maintenance").text
+    assert 'value="update"' not in maint, "обновление — только в своём разделе"
+
+
+def test_admin_menu_icons_are_unique_for_every_section():
+    """У каждого пункта меню админки своя пиктограмма — без повторов и без заглушки."""
+    from pathlib import Path
+    from llmp.web.admin.routes import SECTION_LABELS
+    src = (Path(__file__).resolve().parents[1] / "llmp/web/templates/admin/layout.j2").read_text()
+    icons = dict(re.findall(r"^\s*'(\w+)': '(.+?)',?$", src, re.M))
+    assert set(SECTION_LABELS) <= set(icons), "каждому разделу — своя пиктограмма"
+    assert len(set(icons.values())) == len(icons), "пиктограммы не повторяются"

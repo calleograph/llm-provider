@@ -52,11 +52,16 @@ run_action() {
     diag) cmd=("$sc/ctl.sh" diag) ;;
   esac
   json_status running "$ACTION" "выполняется"
+  # ход работы — построчно в live-output.txt (раздел «Обновление» показывает его, пока идёт действие); секреты скрыты
+  : > "$X/live-output.txt"; chmod 644 "$X/live-output.txt"
   # HOME — домашний каталог пользователя службы (root → /root); не каталог обмена: он доступен на запись всем
-  out="$(env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$(getent passwd "$(id -u)" | cut -d: -f6)" ENV_FILE="$ENV_FILE" ${COMPOSE_EXTRA_FILE:+COMPOSE_EXTRA_FILE="$COMPOSE_EXTRA_FILE"} "${cmd[@]}" 2>&1)" || rc=$?
+  env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$(getent passwd "$(id -u)" | cut -d: -f6)" ENV_FILE="$ENV_FILE" ${COMPOSE_EXTRA_FILE:+COMPOSE_EXTRA_FILE="$COMPOSE_EXTRA_FILE"} "${cmd[@]}" 2>&1 \
+    | mask_stream >> "$X/live-output.txt"
+  rc=${PIPESTATUS[0]}
   [ "$ACTION" = check ] && [ "$rc" -eq 10 ] && rc=0   # check-updates.sh: 10 — «доступно обновление», это успешная проверка
-  printf '%s\n' "$out" | mask_stream > "$X/last-output.txt"; chmod 644 "$X/last-output.txt"
-  json_status "$([ $rc -eq 0 ] && echo done || echo failed)" "$ACTION" "$(printf '%s' "$out" | mask_stream | tail -3 | tr '\n' ' ')"
+  cp -f "$X/live-output.txt" "$X/last-output.txt"; chmod 644 "$X/last-output.txt"
+  out="$(cat "$X/live-output.txt")"
+  json_status "$([ $rc -eq 0 ] && echo done || echo failed)" "$ACTION" "$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   printf '{"at":"%s","action":"%s","result":"%s"}\n' "$(date -u +%FT%TZ)" "$ACTION" "$([ $rc -eq 0 ] && echo ok || echo failed)" >> "$X/history.jsonl"
 }
 
@@ -94,6 +99,8 @@ UNIT
         rm -f "$X/request.processing"; mv -f "$X/inbox/request.txt" "$X/request.processing" 2>/dev/null || { sleep 2; continue; }
         if parse_request "$X/request.processing"; then run_action; else json_status failed rejected "запрос отклонён: неверный формат"; fi
         rm -f "$X/request.processing"
+        # после обновления — перезапуск самого помощника уже из нового кода (иначе он работал бы старой версией до перезагрузки)
+        [ "$ACTION" = update ] && exec "$REPO_ROOT/scripts/updater.sh" run
       fi
       sleep 3
     done ;;

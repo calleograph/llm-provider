@@ -187,5 +187,5 @@ def handle(page: AdminPage) -> str:
         }
     page.page_title = "Обслуживание и состояние"
     return page.render("admin/sections/maintenance.j2", tiles=tiles, host=host if isinstance(host, dict) else None, services=services,
-                       actions=ACTIONS, helper_alive=helper_alive, status=status_text,
+                       actions={k: v for k, v in ACTIONS.items() if k not in ("check", "update")}, helper_alive=helper_alive, status=status_text,
                        errors=[e | {"when": str(e["created_at"])[:16].replace("T", " "), "short": str(e["message"])[:200]} for e in errors])

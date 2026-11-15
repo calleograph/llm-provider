@@ -1,0 +1,106 @@
+{# Раздел «Обновление» (по образцу «Переговорки»): версии, обновление одной кнопкой, окно-терминал хода обновления, история #}
+<div class="llm-toolbar upd-head">
+  <p class="muted llm-lead">Здесь видно, какая версия установлена на сервере и что опубликовано на GitHub, и можно обновиться одной кнопкой.
+    Обновление выполняет тот же скрипт, что и в командной строке (<code>scripts/update.sh</code>): резервная копия базы и настроек, сборка,
+    миграции, перезапуск, проверки. Данные, модели и настройки не удаляются.</p>
+  <form method="post" action="index.php?section=updates&action=helper_request">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="helper_action" value="check">
+    <button class="btn" type="submit"{% if not helper_alive or st.running %} disabled{% endif %}>Проверить сейчас</button>
+  </form>
+</div>
+
+<section class="llm-card upd-project">
+  <div class="upd-versions">
+    <div>
+      <div class="upd-l">Установлено на сервере</div>
+      <div class="upd-v">{{ installed }}{% if commit %} <span class="mono muted">· {{ commit }}</span>{% endif %}</div>
+      <div class="upd-l">{% if last_ok %}последнее успешное обновление: {{ (last_ok.at|string)[:16]|replace('T', ' ') }} UTC{% elif not commit %}<span class="badge tele-badge-raw" title="Образ собран без данных git — вероятно, вручную командой docker compose build">собран вне штатного обновления</span>{% endif %}</div>
+    </div>
+    <div>
+      <div class="upd-l">Опубликовано на GitHub{% if check.channel %} · {{ check.channel|replace('Канал: ', '') }}{% endif %}</div>
+      <div class="upd-v">{% if check and check.ok %}{{ check.version if check.available else installed }}{% else %}—{% endif %}</div>
+      <div class="upd-l">{{ ('проверено ' ~ check_ago) if check_ago else 'проверка ещё не выполнялась' }}</div>
+    </div>
+    <div>
+      <div class="upd-l">Помощник обновлений</div>
+      <div class="upd-v">{% if helper_alive %}<span class="badge badge-active">работает</span>{% else %}<span class="badge llm-badge-bad">не отвечает</span>{% endif %}</div>
+      <div class="upd-l">{{ ('пульс ' ~ beat_ago) if beat_ago else 'нет данных' }}</div>
+    </div>
+  </div>
+
+  {% if not helper_alive %}
+  <div class="alert alert-error upd-alert">Помощник обновлений на сервере не отвечает — обновление из веб-интерфейса недоступно.
+    Установите или перезапустите его на сервере: <code>sudo scripts/updater.sh install</code>. Обновление командой <code>sudo scripts/update.sh</code> работает и без помощника.</div>
+  {% endif %}
+  {% if check and not check.ok %}
+  <div class="alert alert-error upd-alert">Не удалось проверить GitHub. Возможно, у сервера нет выхода в интернет — подробности в окне ниже; тогда обновляйте на сервере командой <code>sudo scripts/update.sh</code>.</div>
+  {% elif check and check.available %}
+  <div class="alert alert-info upd-alert">
+    <b>Доступно обновление: версия {{ installed }} → {{ check.version }}</b>
+    {% if check.commits %}
+    {% set behind = check.behind or check.commits|length %}
+    <details class="upd-commits"><summary>Что нового: {{ behind }} {{ 'изменение' if behind == 1 else ('изменения' if 1 < behind < 5 else 'изменений') }}</summary>
+      <ul>{% for c in check.commits %}<li><code>{{ c[:7] }}</code> {{ c[8:] }}</li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    <div class="upd-chips">
+      {% if check.env_keys %}<span class="badge badge-inactive" title="Будут дописаны в .env со значениями по умолчанию">новые параметры .env: {{ check.env_keys }}</span>{% endif %}
+      {% if check.local_changes %}<span class="badge tele-badge-raw" title="Перед обновлением сохраняются в каталог резервных копий, затем обновление продолжается">локальные изменения на сервере</span>{% endif %}
+      {% if check.diverged %}<span class="badge tele-badge-raw" title="Локальные коммиты будут сохранены, затем установится версия из репозитория">история на сервере расходится с репозиторием</span>{% endif %}
+    </div>
+  </div>
+  {% elif check and check.ok %}
+  <div class="alert alert-success upd-alert">Установлена актуальная версия проекта ({{ installed }}).</div>
+  {% endif %}
+
+  <div class="alert alert-warn upd-alert"><b>Что произойдёт.</b> Чат и админка будут недоступны 1–3 минуты (дольше при пересборке образов),
+    отправка сообщений в это время не пройдёт — обновляйтесь вне рабочего пика. Перед переключением делается резервная копия; если новая версия
+    не пройдёт проверки, автоматически вернётся прежняя.</div>
+
+  <div class="upd-actions">
+    <form method="post" action="index.php?section=updates&action=helper_request" data-confirm-title="Обновить проект?"
+          data-confirm-text="{{ ('Будет установлена версия ' ~ check.version ~ ' с GitHub.') if check and check.available else 'Будет установлена свежая версия с GitHub (если её нет — текущая пересоберётся и проверится).' }} Чат будет недоступен 1–3 минуты; при сбое — автоматический откат.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="helper_action" value="update">
+      <button class="btn btn-primary" type="submit"{% if not helper_alive or st.running %} disabled{% endif %}>⬆ Обновить проект{% if check and check.available %} до {{ check.version }}{% endif %}</button>
+    </form>
+    {% if st.running %}<span class="muted">Идёт {{ 'обновление' if st.action == 'update' else 'операция' }} — дождитесь окончания.</span>
+    {% elif check and check.ok and not check.available %}<span class="muted">Новых изменений нет; обновление пересоберёт и проверит текущую версию.</span>{% endif %}
+  </div>
+</section>
+
+<section class="llm-card upd-term" data-upd-term data-running="{{ '1' if st.running else '0' }}"{% if not show_term %} hidden{% endif %}>
+  <div class="upd-term-head">
+    <p class="section-title">{{ 'Ход обновления' if st.action in ('update', '') else 'Ход операции' }}</p>
+    <span class="badge" data-upd-badge></span>
+    <span class="muted meta" data-upd-at>{{ st.at }}{% if st.at %} UTC{% endif %}</span>
+    <span class="upd-term-tools">
+      <label class="llm-inline-check"><input type="checkbox" data-upd-follow checked> следить за концом</label>
+      <button type="button" class="btn btn-small" data-upd-download>Скачать журнал</button>
+    </span>
+  </div>
+  <div class="upd-progress" data-upd-progress hidden>
+    <div class="upd-bar"><i data-upd-bar></i></div>
+    <div class="muted" data-upd-step></div>
+  </div>
+  <pre class="upd-term-screen" tabindex="0" aria-label="Журнал обновления" data-upd-screen>Ожидание вывода…</pre>
+  <div class="alert" data-upd-result hidden></div>
+</section>
+
+<section class="llm-card upd-history">
+  <p class="section-title">История попыток обновления</p>
+{% if history %}
+  <div class="llm-table-wrap"><table class="data-table">
+    <thead><tr><th>Когда (UTC)</th><th>Версия</th><th>Результат</th><th>Подробности</th></tr></thead>
+    <tbody>
+{% for h in history %}
+      <tr><td class="mono">{{ (h.at|string)[:16]|replace('T', ' ') }}</td>
+        <td class="mono">{{ (h.from or '?')[:12] }} → {{ (h.to or '?')[:12] }}</td>
+        <td>{% if h.result == 'ok' %}<span class="badge badge-active">успешно</span>{% else %}<span class="badge llm-badge-bad">{{ h.result }}</span>{% endif %}</td>
+        <td class="cell-wrap muted">{{ h.detail }}</td></tr>
+{% endfor %}
+    </tbody>
+  </table></div>
+{% else %}
+  <p class="muted">Попыток пока нет (учитываются обновления через <code>scripts/update.sh</code> — и из терминала, и из этого раздела).</p>
+{% endif %}
+</section>

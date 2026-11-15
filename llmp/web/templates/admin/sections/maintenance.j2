@@ -24,6 +24,7 @@
 {% endif %}
 
 <p class="section-title">Действия</p>
+<p class="muted">Проверка и установка обновлений с GitHub — в разделе <a href="index.php?section=updates">«Обновление»</a>.</p>
 <div class="maint-actions">
 {% for key, label in actions.items() %}
   <form method="post" action="index.php?section=maintenance&action=helper_request"{% if key == 'update' %} data-confirm="Обновить приложение? Перед обновлением создаётся резервная копия; при сбое — автоматический откат."{% endif %}>

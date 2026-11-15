@@ -50,7 +50,9 @@ class ModelRepository:
             f"WHERE m.provider_id IN ({','.join('?' * len(ids))}) AND m.is_enabled = 1 AND p.is_enabled = 1 ORDER BY m.priority, p.name, m.display_name",
             ids,
         )
-        return {int(r["id"]): self._normalize(r) for r in rows}
+        # нейросеть, доступная только как базовая, — одной своей моделью по умолчанию
+        base = {i for i, p in allowed_providers.items() if p.get("base_only")}
+        return {int(r["id"]): self._normalize(r) for r in rows if int(r["provider_id"]) not in base or r["is_default"]}
 
     def chain(self, model_id: int, allowed_models: dict[int, dict], auto_by_priority: bool) -> list[int]:
         """Сама модель, её резервные по порядку, затем (если включено) остальные доступные по приоритету. Без повторов —

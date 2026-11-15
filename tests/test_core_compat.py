@@ -81,7 +81,7 @@ def test_schema_matches_php_and_old_database_gets_new_columns(tmp_path):
     db.migrate(old)
     cols = {r[1] for r in old.execute("PRAGMA table_info(llm_users)")}
     assert {"allow_unanonymized", "limit_category_id", "style", "instructions_z"} <= cols
-    assert old.execute("SELECT name, period, tokens FROM llm_limit_categories").fetchone()[:] == ("Базовый", "day", 50000)
+    assert old.execute("SELECT name, period, tokens FROM llm_limit_categories").fetchone()[:] == ("Базовый", "day", 300000)
     db.migrate(old)   # повторно — без ошибок и дублей
     assert old.execute("SELECT COUNT(*) FROM llm_limit_categories").fetchone()[0] == 1
 

@@ -32,8 +32,10 @@ _RAW = [
     ("llm_users", "Макс. блоков инструкций в проекте", "project_instructions_max_blocks", "PROJECT_INSTRUCTIONS_MAX_BLOCKS"),
     ("llm_users", "Макс. длина одного блока инструкций", "project_instruction_max_chars", "PROJECT_INSTRUCTION_MAX_CHARS"),
     ("llm_users", "Зачищать содержимое чатов при неактивности, дней", "inactivity_content_purge_days", "CHAT_INACTIVITY_PURGE_DAYS"),
-    # telemetry — «Телеметрия»
-    ("telemetry", "Хранить телеметрию, дней", "telemetry_retention_days", "TELEMETRY_RETENTION_DAYS"),
+    # telemetry — «Аудит и DLP», вкладка «Правила и хранение»
+    ("telemetry", "Хранить журнал аудита (телеметрию), дней", "telemetry_retention_days", "TELEMETRY_RETENTION_DAYS"),
 ]
+_TABS = {"telemetry_retention_days": "&tab=rules"}   # поле не на первой вкладке раздела
 
-SETTINGS_INDEX: list[dict[str, str]] = [{"section": s, "label": label, "anchor": a, "code": c} for s, label, a, c in _RAW]
+SETTINGS_INDEX: list[dict[str, str]] = [{"section": s, "label": label, "anchor": a, "code": c, "url": f"index.php?section={s}" + _TABS.get(a, "")}
+                                        for s, label, a, c in _RAW]

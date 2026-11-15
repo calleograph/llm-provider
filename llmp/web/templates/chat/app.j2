@@ -269,11 +269,18 @@
 
     <div class="gpt-messages-wrap">
       <div class="gpt-messages" id="chatMessages" aria-live="polite">
-        <div class="gpt-empty" id="chatEmpty">
+        {# экран нового чата: один совет (чередуются — chat.js, главный «одна тема — один чат» через раз) и строка об обезличивании #}
+        {% set tips = [
+          'Одна тема — один чат. Нейросеть учитывает весь разговор: если спросить про Excel, а следом про рецепт пирожков, темы смешаются и ответ будет хуже. Для новой задачи нажмите «Новый чат».',
+          'Файлы (' ~ formats ~ ', до ' ~ max_upload_mb ~ ' МБ) прикладывайте скрепкой — копировать текст в поле не нужно.',
+          'Чем точнее задача, тем лучше ответ: напишите цель, нужный формат и пример.',
+          'Ответ не подошёл? Уточните в этом же чате, что исправить, — нейросеть помнит разговор.',
+          'Для повторяющейся работы заведите проект: его инструкции и материалы учитываются в каждом чате проекта.',
+          'Enter — отправить, Shift+Enter — новая строка.'] %}
+        <div class="gpt-empty" id="chatEmpty" data-tips="{{ tips|tojson|forceescape }}">
           <h2 id="emptyTitle">Чем помочь?</h2>
-          <p class="muted">Текст и файлы ({{ formats }}, до {{ max_upload_mb }} МБ)
-            перед отправкой во внешний сервис обезличиваются. В истории хранится только обезличенный текст.</p>
-          <p class="gpt-empty-legend">Так выглядят данные, которые заменены до отправки: <span class="gpt-mask">[телефон 1]</span> <span class="gpt-mask">[почта 1]</span> <span class="gpt-mask">[адрес]</span></p>
+          <p class="gpt-tip"><span class="gpt-tip-label">Совет</span> <span class="gpt-tip-text" id="emptyTip" aria-live="polite">{{ tips[0] }}</span></p>
+          <p class="gpt-empty-legend">Персональные данные заменяются метками до отправки, в истории — только обезличенный текст: <span class="gpt-mask">[телефон 1]</span> <span class="gpt-mask">[почта 1]</span> <span class="gpt-mask">[адрес]</span></p>
         </div>
       </div>
       <nav class="gpt-jumpdots" id="jumpDots" aria-label="Быстрый переход к своим сообщениям" hidden></nav>
@@ -291,7 +298,6 @@
           <span class="gpt-dictation-dot" aria-hidden="true"></span>
           <span class="gpt-dictation-text" id="dictationText"></span>
           <span class="gpt-dictation-time" id="dictationTime"></span>
-          <button type="button" class="btn btn-small" id="dictationStop">Стоп</button>
           <button type="button" class="btn btn-small btn-ghost" id="dictationCancel">Отмена</button>
         </div>
         <div class="gpt-composer-row">
@@ -319,8 +325,16 @@
       </form>
     </div>
     <div class="gpt-foot">
-      <p class="gpt-footnote">Персональные и конфиденциальные данные заменяются метками до отправки во внешнюю нейросеть.</p>
-      <span class="gpt-telemetry" id="telemetryNote" tabindex="0" role="note" title="Запросы к внешним нейросетям и расход токенов фиксируются для контроля по соглашению об использовании." aria-label="Ведётся телеметрия: запросы к внешним нейросетям и расход токенов фиксируются для контроля по соглашению об использовании.">Ведётся телеметрия</span>
+      {# подписи под полем ввода: коротко, подробности — во всплывающей подсказке (наведение, фокус, касание) #}
+      <span class="gpt-foot-note gpt-foot-anon" tabindex="0" role="note" data-tip="Распознанные персональные и конфиденциальные данные заменяются специальными метками перед отправкой во внешние нейросети." aria-label="Обезличивание включено. Распознанные персональные и конфиденциальные данные заменяются специальными метками перед отправкой во внешние нейросети.">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 1.5 2.75 3.5v4c0 3.2 2.2 5.9 5.25 7 3.05-1.1 5.25-3.8 5.25-7v-4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m5.6 8.1 1.7 1.7 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Обезличивание включено
+      </span>
+      <span class="gpt-foot-note gpt-foot-audit" id="telemetryNote" tabindex="0" role="note" data-tip="Фиксируются обращения к внешним моделям и расход токенов в соответствии с соглашением об использовании." aria-label="Учёт запросов включен. Фиксируются обращения к внешним моделям и расход токенов в соответствии с соглашением об использовании.">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 13V9M8 13V3.5M12.5 13V6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Учёт запросов включен
+        <svg class="gpt-foot-info" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v3.6M8 5.1v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
     </div>
   </main>
 </div>

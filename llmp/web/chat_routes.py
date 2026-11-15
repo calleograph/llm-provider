@@ -110,6 +110,8 @@ def _index(request: Request, form: FormData | None):
                 auth = llm.authenticator.authenticate(domain, parsed["sam"], password)
                 if auth["user_dn"] is None:
                     login_error = "Неверный логин или пароль."
+                    if parsed["sam"].lower() == "admin":   # частая ошибка: локальный администратор входит не здесь, а в админке
+                        login_error = "Это вход в чат по учётной записи Windows. Локальный администратор входит по ссылке «Вход для администратора» ниже."
                     events.user(c.ip, log_name, _E.OP_AUTH, "CHAT_LOGIN_FAILED", {"domain": dname, "reason": "user_not_found"})
                 elif not auth["groups"]:
                     login_error = ("Нет доступа к сервису: ваша учётная запись не входит ни в одну разрешённую группу. "

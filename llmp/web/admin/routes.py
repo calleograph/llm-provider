@@ -38,17 +38,17 @@ SECTION_GROUPS: dict[str, dict[str, str]] = {
     "LDAP": {"ldap": "LDAP-подключения", "access": "Доступ к админ-панели"},
     "Доступ к чату": {"chat_access": "Доступ к чату"},
     "Нейросети": {"llm_providers": "Подключения LLM API", "llm_models": "Модели и резервирование", "llm_limits": "Категории лимитов"},
-    "Пользователи": {"llm_users": "Пользователи чата", "telemetry": "Телеметрия"},
-    "Система": {"anonymization": "Обезличивание", "mail": "Почта и уведомления", "maintenance": "Обслуживание и состояние",
+    "Пользователи": {"llm_users": "Пользователи чата", "telemetry": "Аудит и DLP"},
+    "Система": {"updates": "Обновление", "anonymization": "Обезличивание", "mail": "Почта и уведомления", "maintenance": "Обслуживание и состояние",
                 "log": "Журналы", "system": "Настройки"},
 }
 SECTION_LABELS = {k: v for group in SECTION_GROUPS.values() for k, v in group.items()}
 SECTIONS = ("status", "services", "ldap", "access", "chat_access", "llm_providers", "llm_models", "llm_limits", "llm_users",
-            "telemetry", "anonymization", "mail", "log", "system", "maintenance")
+            "telemetry", "anonymization", "mail", "log", "system", "maintenance", "updates")
 
 
 def _settings_index_json() -> Markup:
-    entries = [e | {"sectionLabel": SECTION_LABELS[e["section"]], "url": f"index.php?section={e['section']}"}
+    entries = [e | {"sectionLabel": SECTION_LABELS[e["section"]]}
                for e in SETTINGS_INDEX if e["section"] in SECTION_LABELS]
     # формат json_encode(JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); «</» экранируется — содержимое внутри <script>
     return Markup(json.dumps(entries, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/"))

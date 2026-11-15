@@ -16,8 +16,10 @@ def _unique_ints(values) -> list[int]:
     return list(dict.fromkeys(int(v) for v in values))
 
 
-def _row(r) -> dict:
-    return {"id": int(r["id"]), "name": str(r["name"]), "model": str(r["model"]), "provider_type": str(r["provider_type"]), "is_default": bool(r["is_default"])}
+def _row(r, base_only: bool = False) -> dict:
+    """base_only — доступ только к базовой модели (модель по умолчанию нейросети по умолчанию), без явного права на нейросеть."""
+    return {"id": int(r["id"]), "name": str(r["name"]), "model": str(r["model"]), "provider_type": str(r["provider_type"]),
+            "is_default": bool(r["is_default"]), "base_only": base_only}
 
 
 class UserProviderRepository:
@@ -75,6 +77,14 @@ class AccessPolicy:
                     f"SELECT id, name, model, provider_type, is_default FROM llm_providers WHERE id IN ({','.join('?' * len(ids))}) AND is_enabled = 1", ids
                 ):
                     result[int(r["id"])] = _row(r)
+        # Базовая модель — всем, кого пустили в чат (включённый субъект домена с включённым чатом): добавленному в чат
+        # человеку не нужно отдельно выдавать права, чтобы он мог работать. Остальные модели — по явным правам.
+        if group_ids and self.conn.execute(
+                f"SELECT EXISTS (SELECT 1 FROM llm_domain_groups g JOIN ldap_configs c ON c.id = g.ldap_config_id WHERE g.id IN ({','.join('?' * len(group_ids))}) "
+                "AND g.is_enabled = 1 AND g.ldap_config_id = ? AND c.llm_enabled = 1)", (*group_ids, domain_id)).fetchone()[0]:
+            r = self.conn.execute("SELECT id, name, model, provider_type, is_default FROM llm_providers WHERE is_default = 1 AND is_enabled = 1").fetchone()
+            if r is not None and int(r["id"]) not in result:
+                result[int(r["id"])] = _row(r, base_only=True)
         return dict(sorted(result.items(), key=lambda kv: kv[1]["name"]))
 
     def is_allowed(self, user: ChatUser, provider_id: int) -> bool:
