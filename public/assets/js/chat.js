@@ -11,6 +11,11 @@
   if (!app) {
     return;
   }
+  // «Голосовой ввод — только по HTTPS» решает браузер: за reverse proxy без доверенного адреса сервер видит http,
+  // а у пользователя https и микрофон доступен
+  if (window.isSecureContext) {
+    app.removeAttribute('data-insecure');
+  }
 
   var API = 'api.php';
   var csrf = app.getAttribute('data-csrf') || '';
