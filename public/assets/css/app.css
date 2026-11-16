@@ -728,8 +728,8 @@ a.admin-login-brand:hover { color: var(--text); }
   .gpt-msg.is-pending .gpt-msg-body::after { animation: none; background: color-mix(in srgb, var(--accent) 8%, transparent); }
 }
 
-.gpt-msg-actions { display: flex; gap: 2px; margin-top: var(--s2); opacity: 0; transition: opacity var(--t1) var(--ease); }
-.gpt-msg:hover .gpt-msg-actions, .gpt-msg-actions:focus-within { opacity: 1; }
+.gpt-msg-actions { display: flex; gap: 2px; margin-top: var(--s1); }
+.gpt-msg-user .gpt-msg-actions { justify-content: flex-end; }
 .gpt-msg-action { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer; transition: background-color var(--t1) var(--ease), color var(--t1) var(--ease); }
 .gpt-msg-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .gpt-msg-action:hover { background: var(--soft); color: var(--text); }
@@ -816,7 +816,7 @@ h4.gpt-heading, h5.gpt-heading, h6.gpt-heading { font-size: var(--fs-16); }
 .gpt-attachment-list { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0 0 var(--s2); }
 .gpt-attachment { display: flex; align-items: center; gap: var(--s2); max-width: 100%; min-height: 32px; padding: 0 var(--s1) 0 var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); font-size: var(--fs-12); animation: rise var(--t2) var(--ease); }
 .gpt-attachment-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gpt-attachment-remove { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); font-size: var(--fs-16); line-height: 1; cursor: pointer; }
+.gpt-attachment-remove { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); font-size: var(--fs-16); line-height: 1; cursor: pointer; }
 .gpt-attachment-remove:hover { background: var(--soft); color: var(--text); }
 
 /* перетаскивание файлов: подсвечивается только зона ввода */
@@ -1066,9 +1066,9 @@ h4.gpt-heading, h5.gpt-heading, h6.gpt-heading { font-size: var(--fs-16); }
   .gpt-skip-anon, .gpt-crumb-project, .gpt-msg-tokens summary, .gpt-menu-item, .admin-nav a, .llm-inline-check { min-height: 44px; }
   .gpt-input { min-height: 44px; }
 }
-/* на сенсорных экранах наведения нет — действия под сообщением и у пунктов списка видны всегда */
+/* на сенсорных экранах наведения нет — действия у пунктов списка видны всегда */
 @media (pointer: coarse) {
-  .gpt-msg-actions, .gpt-item-more { opacity: 1; }
+  .gpt-item-more { opacity: 1; }
 }
 
 /* ---------- Подписи под полем ввода чата (обезличивание, учёт запросов) и раздел «Аудит и DLP» ---------- */

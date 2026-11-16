@@ -627,12 +627,12 @@
     return Promise.resolve();
   }
 
-  function buildMessageActions(content) {
+  function buildMessageActions(content, label) {
     var actions = el('div', 'gpt-msg-actions');
     var copyButton = el('button', 'gpt-msg-action', null);
     copyButton.type = 'button';
     copyButton.title = 'Копировать';
-    copyButton.setAttribute('aria-label', 'Копировать ответ');
+    copyButton.setAttribute('aria-label', label);
     copyButton.appendChild(copyIcon());
     copyButton.addEventListener('click', function () {
       copyToClipboard(String(content || '')).then(function () {
@@ -858,7 +858,7 @@
       wrap.appendChild(goToCleanup);
     }
     if (role === 'assistant') {
-      wrap.appendChild(buildMessageActions(message.content));
+      wrap.appendChild(buildMessageActions(message.content, 'Копировать ответ'));
     }
     if (role === 'user') {
       var noteText = options.pending
@@ -866,6 +866,7 @@
         : (message.unanonymized ? 'Отправлено без обезличивания' : 'Отправлено в обезличенном виде');
       var note = el('div', 'gpt-msg-note' + (message.unanonymized || options.skipAnonymization ? ' gpt-msg-note-danger' : ''), noteText);
       wrap.appendChild(note);
+      wrap.appendChild(buildMessageActions(message.content, 'Копировать сообщение'));
       wrap.setAttribute('data-user-msg', '1');
       wrap.setAttribute('data-preview', String(message.content || '').slice(0, 120));
     }
@@ -1835,6 +1836,34 @@
   initDropzone(els.sourcesPanel, els.sourcesPanel, function (files) {
     addSourceFiles(files);
   }, true);
+
+  /*
+   * Вставка изображения из буфера (скриншот Win+Shift+S, PrintScreen, «Копировать изображение»).
+   * Браузер отдаёт все такие картинки под именем image.png — даём уникальные имена, иначе вложения неразличимы.
+   * Если в буфере есть и текст (копия из Excel, Word), оставляем обычную вставку текста.
+   */
+  function pastedImages(e) {
+    var data = e.clipboardData;
+    if (!data || Array.prototype.indexOf.call(data.types || [], 'text/plain') !== -1) return [];
+    var stamp = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '-');
+    var taken = state.files.map(function (f) { return f.name; });
+    return Array.prototype.filter.call(data.files || [], function (f) { return /^image\//.test(f.type); }).map(function (f) {
+      var ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/[^a-z0-9]/g, '') || 'png';
+      var name = 'Скриншот ' + stamp + '.' + ext;
+      for (var n = 2; taken.indexOf(name) !== -1; n++) name = 'Скриншот ' + stamp + ' (' + n + ').' + ext;
+      taken.push(name);
+      return new File([f], name, { type: f.type });
+    });
+  }
+  document.addEventListener('paste', function (e) {
+    var t = e.target;
+    // чужие поля (материалы проекта, поиск, формы) не трогаем; в строку ввода чата и на «пустую» страницу — можно
+    if (t !== els.input && t && (t.closest && t.closest('input, textarea, select, [contenteditable]') || (els.sourcesPanel && els.sourcesPanel.contains(t)))) return;
+    var images = pastedImages(e);
+    if (!images.length || state.sending) return;
+    e.preventDefault();
+    addFiles(images);
+  });
 
   $('chatNew').addEventListener('click', function () { newConversation(null); });
   els.file.addEventListener('change', function () { addFiles(els.file.files); });

@@ -252,3 +252,14 @@ def test_context_maintenance_runs_after_the_response_on_its_own_connection(web):
         assert "maintenance" not in r.json()
         cid = r.json()["conversation"]["id"]
     assert web.conn.execute("SELECT COUNT(*) FROM llm_conversation_summaries").fetchone()[0] == 1
+
+
+def test_chat_script_pastes_screenshots_and_copies_both_message_kinds():
+    """Скриншот из буфера становится вложением, а копировать можно и своё сообщение, и ответ; кнопка не прячется до наведения."""
+    from llmp import paths
+    js = (paths.ROOT / "public" / "assets" / "js" / "chat.js").read_text(encoding="utf-8")
+    css = (paths.ROOT / "public" / "assets" / "css" / "app.css").read_text(encoding="utf-8")
+    assert "addEventListener('paste'" in js and "clipboardData" in js
+    assert "'Копировать сообщение'" in js and "'Копировать ответ'" in js
+    actions = next(line for line in css.splitlines() if line.startswith(".gpt-msg-actions {"))
+    assert "opacity: 0" not in actions
