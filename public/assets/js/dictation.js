@@ -60,7 +60,7 @@
           if (self.phase !== 'error') { self.setPhase('error', 'Связь с сервером распознавания прервалась. Уже распознанный текст остался в поле.'); }
         }
       };
-      ws.onerror = function () { if (self.phase === 'starting') { self.fail('Нет связи с сервером распознавания'); } };
+      ws.onerror = function () { if (self.phase === 'starting') { self.fail('Нет связи с сервером распознавания. Сообщите администратору: прокси сайта должен пропускать WebSocket.'); } };
     }).catch(function (e) {
       self.fail((e && e.message) || 'Не удалось начать диктовку');
     });

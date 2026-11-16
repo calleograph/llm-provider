@@ -31,7 +31,8 @@ def connect(path: Path | str | None = None, *, migrate_schema: bool = False) -> 
         raise RuntimeError("Не удалось открыть хранилище настроек.") from exc
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    if p != ":memory:":
+    # переключение в WAL берёт блокировку: при старте нескольких воркеров сразу — «database is locked»; уже включённый режим не трогаем
+    if p != ":memory:" and conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
         conn.execute("PRAGMA journal_mode = WAL")
     if is_new:
         try:

@@ -85,6 +85,16 @@ sudo ./install.sh               # мастер: профиль, каталоги
 - Голосовой ввод браузер разрешает только в защищённом контексте (HTTPS или `localhost`). По обычному http кнопка микрофона
   не работает, и чат показывает подсказку «Голосовой ввод — только по HTTPS».
 - Для проверки Origin диктовки и ссылок в письмах задайте публичный адрес: `APP_PUBLIC_URL` в `.env`.
+- Диктовка идёт по WebSocket `/ws/dictation`. Свой reverse proxy перед сайтом должен передавать заголовки `Upgrade` и `Connection`
+  (в nginx: `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
+  Без них микрофон показывает «Нет связи с сервером распознавания», а запрос к `/ws/dictation` получает ответ 426 — это признак именно прокси.
+
+## Сбой сборки образов: `failed to open writer … locked`
+
+На Docker 29 с хранилищем образов containerd (`docker info` → `driver-type: io.containerd.snapshotter.v1`) встроенный BuildKit может падать
+на экспорте образа: `mount callback failed … failed to open writer: ref moby/1/… locked … unavailable`. Установщик и `scripts/update.sh`
+(в том числе запущенный кнопкой в админке) сами повторяют сборку один раз классическим сборщиком — вручную ничего делать не нужно.
+Если нужно собрать вручную: `DOCKER_BUILDKIT=0 COMPOSE_BAKE=false COMPOSE_PARALLEL_LIMIT=1 docker compose build` (из каталога проекта).
 
 ## Доступ администратора
 

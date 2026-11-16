@@ -22,6 +22,7 @@ import uuid
 from collections.abc import Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 log = logging.getLogger("asr.dictation.ws")
@@ -87,6 +88,12 @@ async def within_limit(redis: Redis, key: str, limit: int, window: int) -> bool:
 def mount_dictation(app: FastAPI, redis: Redis, snapshot: Callable[[], dict]) -> None:
     secret = os.environ.get("DICTATION_SECRET", "")
     allowed = [o.strip().rstrip("/") for o in os.environ.get("APP_ORIGINS", "").split(",") if o.strip()]
+
+    @app.get("/ws/dictation")
+    async def dictation_needs_upgrade():
+        # обычный GET сюда доходит, когда внешний reverse proxy не передал Upgrade/Connection; без этого ответа было бы немое «404»
+        return JSONResponse({"detail": "Нужно WebSocket-соединение: reverse proxy перед сайтом должен передавать заголовки Upgrade и Connection."},
+                            status_code=426, headers={"Upgrade": "websocket"})
 
     @app.websocket("/ws/dictation")
     async def dictation(ws: WebSocket):

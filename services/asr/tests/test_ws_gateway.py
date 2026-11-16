@@ -113,3 +113,11 @@ def test_concurrency_limit(stack, monkeypatch):
     sync.zadd(ws_gateway.ACTIVE, {"other": time.time() + 100})
     with TestClient(app) as c, c.websocket_connect(f"/ws/dictation?ticket={ticket(nonce='c' * 32, mc=1)}") as ws:
         assert ws.receive_json()["code"] == "busy"
+
+
+def test_plain_get_without_upgrade_explains_the_proxy_problem(stack):
+    """Прокси без Upgrade/Connection даёт обычный GET: вместо немого 404 — 426 с понятной причиной."""
+    app, _sync, _ready = stack
+    with TestClient(app) as c:
+        r = c.get("/ws/dictation")
+    assert r.status_code == 426 and "Upgrade" in r.json()["detail"] and r.headers["upgrade"] == "websocket"

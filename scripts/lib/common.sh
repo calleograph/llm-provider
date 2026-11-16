@@ -70,6 +70,19 @@ compose_args() {
 }
 dc() { compose_args; docker "${COMPOSE_ARGS[@]}" "$@"; }
 
+# Сборка образов. Встроенный BuildKit на Docker с хранилищем образов containerd иногда падает при экспорте
+# («failed to open writer … locked»); тогда один раз повторяем классическим сборщиком, он собирает те же образы.
+# Остальные сбои (сеть, pypi) не повторяются: сборка ASR занимает минуты.
+build_images() {
+  local log rc=0; log="$(mktemp)"
+  ( set -o pipefail; dc build 2>&1 | tee "$log" ) || rc=$?
+  if [ "$rc" -ne 0 ] && grep -qE 'failed to open writer|mount callback failed|ref moby/.* locked' "$log"; then
+    warn "BuildKit не смог сохранить образ (известный сбой Docker с containerd image store) — повтор классическим сборщиком"
+    rc=0; DOCKER_BUILDKIT=0 COMPOSE_BAKE=false COMPOSE_PARALLEL_LIMIT=1 dc build || rc=$?
+  fi
+  rm -f "$log"; return "$rc"
+}
+
 # Выполнить команду или только напечатать её (DRY_RUN=1).
 run() { if [ "$DRY_RUN" = "1" ]; then printf '%s[dry-run]%s %s\n' "$C_YEL" "$C_OFF" "$*"; else "$@"; fi; }
 

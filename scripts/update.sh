@@ -124,7 +124,7 @@ main() {
   echo "build $FROM $TO $BACKUP" > "$STATE"
   export APP_VERSION; APP_VERSION="$(app_version)"; export APP_GIT_COMMIT="$TO"; export IMAGE_TAG="$TO"
   say "Сборка образов $TO (прежняя версия продолжает работать)"
-  if ! dc build; then
+  if ! build_images; then
     git -C "$REPO_ROOT" reset -q --keep "$FROM"; rm -f "$STATE"; history failed build; die "Сборка не удалась — код возвращён на $FROM, работающая версия не тронута"
   fi
 

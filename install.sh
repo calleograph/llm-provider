@@ -193,7 +193,7 @@ stage_models() {
 stage_build() {
   export APP_VERSION; APP_VERSION="$(app_version)"; export APP_GIT_COMMIT; APP_GIT_COMMIT="$(app_commit)"
   info "Сборка образов (первый раз ASR собирается 10–30 минут: torch и GigaAM)"
-  run dc build || fail_stage build "сборка не удалась — проверьте доступ к реестрам и pypi; повтор: ./install.sh --from build"
+  run build_images || fail_stage build "сборка не удалась — проверьте доступ к реестрам и pypi; повтор: ./install.sh --from build"
 }
 
 stage_start() {

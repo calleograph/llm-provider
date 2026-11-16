@@ -23,6 +23,8 @@ jobs:
         run: sudo apt-get install -y shellcheck >/dev/null && shellcheck -S error install.sh scripts/*.sh scripts/lib/*.sh tests/scripts/*.sh
       - name: "обновление по git: check-updates, автопочинка, update.sh (без Docker)"
         run: bash tests/scripts/update_test.sh
+      - name: "загрузка весов и запасная сборка образов (без Docker)"
+        run: bash tests/scripts/models_test.sh && bash tests/scripts/build_fallback_test.sh
       - name: compose config
         run: cp .env.example .env && sed -i 's/^APP_MASTER_KEY=.*/APP_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/; s/^INTERNAL_API_TOKEN=.*/INTERNAL_API_TOKEN=x/; s/^DICTATION_SECRET=.*/DICTATION_SECRET=x/; s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=x/' .env && docker compose config -q
 
