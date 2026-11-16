@@ -57,6 +57,10 @@ case "$cmd" in
     ;;
   verify)
     rc=0
+    # нет весов речи — без них проверка ASR не пройдёт (а обновление откатится): сначала дозагрузка и перезапуск ASR
+    if [ "${ASR_ENABLED:-0}" = 1 ] && [ ! -f "$DATA_ROOT/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" ]; then
+      warn "Нет весов распознавания речи — загружаю"; "$(dirname "$0")/models.sh" --restart || true
+    fi
     while IFS='|' read -r s st h _; do
       if [ "$st" = running ] && { [ "$h" = healthy ] || [ -z "$h" ]; }; then ok "$s: работает${h:+ ($h)}"; else fail "$s: $st ${h:-}"; rc=1; fi
     done < <(svc_table)
