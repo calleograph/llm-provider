@@ -625,3 +625,22 @@ def test_chat_unanonymized_send_stays_on_the_chosen_model(bench):
         bench.chat_send(skip_anonymization=True)
     assert bench.calls_to("backup") == 0
     assert scalar(bench.conn, "SELECT tokens FROM llm_usage") == 0
+
+
+def test_chat_token_limit_closes_a_long_chat_before_any_request(env):
+    """Каждое сообщение заново отправляет историю: чат, расходы которого с следующим запросом превысят лимит, не пишет в модель."""
+    env.answer = lambda body: {"choices": [{"message": {"content": "Ответ"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 700, "completion_tokens": 300}}
+    env.module.chat_settings.save({"chat_token_limit": "2500"})
+    first = env.send()
+    cid = first["conversation"]["id"]
+    assert (first["conversation"]["tokens_spent"], first["conversation"]["token_limit"]) == (1000, 2500)
+    assert env.send("Дальше", cid)["conversation"]["tokens_spent"] == 2000
+    sent = len(env.llm_bodies())
+    with pytest.raises(ChatException) as e:       # 2000 + следующий запрос (>500) уже выше 2500
+        env.send("Ещё", cid)
+    assert (e.value.error_code, e.value.http_status) == ("chat_limit", 429) and "Начните новый чат" in e.value.user_message
+    assert len(env.llm_bodies()) == sent, "в нейросеть ничего не уходит"
+    assert scalar(env.conn, f"SELECT tokens_spent FROM llm_conversations WHERE id = {cid}") == 2000
+    assert env.send("Новая тема")["conversation"]["tokens_spent"] == 1000, "новый чат начинает с нуля"
+    env.module.chat_settings.save({"chat_token_limit": "0"})
+    assert env.send("Снова", cid)["conversation"]["tokens_spent"] == 3000, "0 — без ограничения"

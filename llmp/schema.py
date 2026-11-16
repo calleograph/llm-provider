@@ -363,4 +363,6 @@ STEPS: list[tuple[str, ...]] = [
 )"""),
     ("seed", 'dlp_rules'),
     ("seed", 'outbound_index'),
+    ("column", 'llm_conversations', 'tokens_spent INTEGER NOT NULL DEFAULT 0'),
+    ("seed", 'conversation_tokens'),
 ]

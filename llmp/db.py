@@ -106,7 +106,16 @@ def _seed_outbound_index(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO app_settings (key, value) VALUES ('telemetry_index_version', '1') ON CONFLICT(key) DO NOTHING")
 
 
-SEEDS = {"default_limit_category": _seed_default_limit_category, "default_models": seed_default_models,
+def _seed_conversation_tokens(conn: sqlite3.Connection) -> None:
+    """Счётчик расхода чата для уже существующих диалогов: сумма списаний по ответам (llm_messages.tokens), один раз."""
+    if conn.execute("SELECT EXISTS (SELECT 1 FROM app_settings WHERE key = 'conversation_tokens_version')").fetchone()[0]:
+        return
+    conn.execute("UPDATE llm_conversations SET tokens_spent = COALESCE((SELECT SUM(tokens) FROM llm_messages "
+                 "WHERE conversation_id = llm_conversations.id AND role = 'assistant'), 0)")
+    conn.execute("INSERT INTO app_settings (key, value) VALUES ('conversation_tokens_version', '1') ON CONFLICT(key) DO NOTHING")
+
+
+SEEDS = {"conversation_tokens": _seed_conversation_tokens, "default_limit_category": _seed_default_limit_category, "default_models": seed_default_models,
          "dlp_rules": _seed_dlp_rules, "outbound_index": _seed_outbound_index}
 
 

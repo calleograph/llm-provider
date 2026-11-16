@@ -837,6 +837,12 @@ h4.gpt-heading, h5.gpt-heading, h6.gpt-heading { font-size: var(--fs-16); }
 .gpt-mic-insecure { display: none; flex: 0 1 auto; align-items: center; gap: var(--s1); min-width: 0; min-height: 40px; color: var(--muted); font-size: var(--fs-12); line-height: var(--lh-tight); }
 .gpt-mic-insecure svg { width: 16px; height: 16px; }
 #chatApp[data-insecure="1"] .gpt-mic-insecure { display: inline-flex; }
+/* расход токенов чата: от 80% лимита (warn) и при исчерпании (full) */
+.gpt-budget { display: flex; align-items: center; gap: var(--s3); margin: 0 0 var(--s2); padding: var(--s2) var(--s3); border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: var(--fs-12); line-height: var(--lh-tight); }
+.gpt-budget[hidden] { display: none; }
+.gpt-budget[data-state="full"] { border-color: var(--danger); color: var(--text); }
+.gpt-budget-text { flex: 1 1 auto; min-width: 0; }
+.gpt-budget .btn { flex: none; min-height: 44px; }
 .gpt-dictation { display: flex; align-items: center; gap: var(--s2); min-height: 40px; margin: var(--s1) 0 0; padding: var(--s1) var(--s1) var(--s1) var(--s3); border-radius: var(--r-sm); background: var(--bg); color: var(--muted); font-size: var(--fs-12); }
 .gpt-dictation-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .gpt-dictation[data-state="listening"] .gpt-dictation-dot { background: var(--danger); animation: pulse 1.2s ease-in-out infinite; }

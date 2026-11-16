@@ -92,6 +92,7 @@ def handle(page: AdminPage) -> str:
                 "system_prompt": page.post("system_prompt").replace("\r\n", "\n").strip(PHP_WS),
                 "history_max_chars": str(php_int(page.post("history_max_chars", "0"))),
                 "max_message_chars": str(php_int(page.post("max_message_chars", "0"))),
+                "chat_token_limit": str(php_int(page.post("chat_token_limit", "0"))),
                 "style_default": style if style in STYLES else "balanced",
                 "styles_allowed": ",".join(k for k in STYLES if k in page.post_list("styles_allowed")),
                 "summary_model_id": str(max(0, php_int(page.post("summary_model_id", "0")))),
@@ -105,6 +106,7 @@ def handle(page: AdminPage) -> str:
                 chat.save(values)
                 events.admin(admin, ip, "llm_chat_settings_update", True, {
                     "history_max_chars": values["history_max_chars"], "max_msg_chars": values["max_message_chars"],
+                    "chat_token_limit": values["chat_token_limit"],
                     "system_instruction_chars": len(values["system_prompt"]),
                 })
                 page.flash_success = "Общие параметры чата сохранены."

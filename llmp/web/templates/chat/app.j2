@@ -291,6 +291,10 @@
 
     <div class="gpt-composer-wrap" id="composerWrap">
       <div class="gpt-dropzone" id="chatDropzone"><span>Отпустите файлы, чтобы приложить к сообщению</span></div>
+      <div class="gpt-budget" id="chatBudget" role="status" hidden>
+        <span class="gpt-budget-text" id="chatBudgetText"></span>
+        <button type="button" class="btn btn-small" id="chatBudgetNew">Новый чат</button>
+      </div>
       <form class="gpt-composer" id="chatForm" autocomplete="off">
         <div class="gpt-attachment-list" id="chatAttachmentList" hidden></div>
         <textarea class="gpt-input" id="chatInput" rows="1" placeholder="Спросите что-нибудь" aria-label="Сообщение"></textarea>

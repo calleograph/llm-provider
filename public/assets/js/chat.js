@@ -328,6 +328,7 @@
   }
 
   function renderLists() {
+    renderBudget();
     var pinned = state.conversations.filter(function (c) { return c.pinned; });
     var regular = state.conversations.filter(function (c) { return !c.pinned && !c.project_id; });
 
@@ -963,6 +964,20 @@
   }
   showTip(true);
 
+  /* Расход токенов чата: каждое сообщение заново отправляет историю, поэтому длинный чат дорожает. Плашка — от 80% лимита. */
+  function renderBudget() {
+    var box = $('chatBudget'), b = state.currentId && state.budget;
+    if (!box) return;
+    var pct = b && b.limit > 0 ? b.spent / b.limit : 0;
+    box.hidden = pct < 0.8;
+    if (box.hidden) return;
+    box.setAttribute('data-state', pct >= 1 ? 'full' : 'warn');
+    $('chatBudgetText').textContent = pct >= 1
+      ? 'Лимит токенов этого чата исчерпан (' + formatNumber(b.spent) + ' из ' + formatNumber(b.limit) + '). Начните новый чат: так дешевле и ответы точнее.'
+      : 'Чат уже израсходовал ' + formatNumber(b.spent) + ' из ' + formatNumber(b.limit) + ' токенов: каждое сообщение заново отправляет всю историю и стоит дороже. Для новой темы лучше начать новый чат.';
+  }
+  $('chatBudgetNew').addEventListener('click', function () { newConversation(state.currentProjectId || null); });
+
   function newConversation(projectId) {
     convPrefs = { style: null, instructions: '' };
     state.currentId = null;
@@ -1007,6 +1022,7 @@
     closeMenu();
     request('GET', 'conversation', null, '&id=' + encodeURIComponent(id)).then(function (data) {
       state.currentId = data.conversation.id;
+      state.budget = { spent: data.conversation.tokens_spent || 0, limit: data.conversation.token_limit || 0 };
       state.currentProjectId = data.conversation.project_id;
       state.projectData = null;
       showChatView();
@@ -1697,6 +1713,7 @@
 
       var c = data.conversation;
       state.currentId = c.id;
+      state.budget = { spent: c.tokens_spent || 0, limit: c.token_limit || 0 };
       state.currentProjectId = c.project_id;
       state.projectData = null;
       setHeader(c.title, c.project_id);
@@ -1711,6 +1728,7 @@
       // Исходный текст остаётся в поле ввода — его можно отправить повторно.
       pending.remove();
       if (fromProjectView) setHeader('', state.currentProjectId);
+      if (error.code === 'chat_limit' && state.currentId && state.budget) { state.budget.spent = Math.max(state.budget.spent, state.budget.limit); renderBudget(); }
       toast(error.message, error.code);
     }).finally(function () {
       stopStages();

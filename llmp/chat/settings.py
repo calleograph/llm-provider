@@ -18,6 +18,8 @@ DEFAULTS = {
     # Общий лимит токенов (если категорий нет); индивидуальный — в «Пользователи чата».
     "limit_period": "none",
     "limit_tokens": "300000",
+    # Расход токенов в одном чате: каждое сообщение заново отправляет историю, поэтому длинный чат дорожает. 0 — без ограничения.
+    "chat_token_limit": "200000",
     # Срок хранения неиспользуемых диалогов, дней (0 — бессрочно).
     "retention_days": "0",
     # Суммарный объём источников проекта (символов обезличенного текста) — уходит в каждый запрос проекта.
@@ -42,7 +44,7 @@ DEFAULTS = {
 }
 
 _RANGES = {
-    "history_max_chars": (1000, 2000000), "max_message_chars": (100, 500000), "limit_tokens": (0, 1000000000),
+    "history_max_chars": (1000, 2000000), "max_message_chars": (100, 500000), "limit_tokens": (0, 1000000000), "chat_token_limit": (0, 1000000000),
     "retention_days": (0, 3650), "project_sources_max_chars": (1000, 2000000), "project_sources_max_files": (1, 50),
     "project_instructions_max_blocks": (1, 30), "project_instruction_max_chars": (100, 20000),
     "inactivity_content_purge_days": (0, 3650), "telemetry_retention_days": (0, 3650),

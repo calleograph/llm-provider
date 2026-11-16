@@ -243,5 +243,14 @@
       <input class="text-input" type="number" id="max_message_chars" name="max_message_chars" value="{{ chat.get('max_message_chars') }}">
     </div>
   </div>
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="chat_token_limit">Лимит токенов на один чат{{ setting_code('CHAT_TOKEN_LIMIT') }}</label>
+      <input class="text-input" type="number" id="chat_token_limit" name="chat_token_limit" min="0" value="{{ chat.get('chat_token_limit') }}">
+      <p class="muted">Каждое сообщение заново отправляет модели всю историю чата, поэтому длинный разговор дорожает с каждым ответом. Когда чат расходует столько токенов
+        (вопросы, ответы, сводки), в нём нельзя писать дальше — предлагается начать новый. Пользователь видит расход и предупреждение за 20%. 0 — без ограничения.
+        Лимит сотрудника на день или месяц действует отдельно.</p>
+    </div>
+  </div>
   <button class="btn btn-primary" type="submit">Сохранить параметры</button>
 </form>

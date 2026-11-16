@@ -159,6 +159,9 @@ class ChatService:
                 "provider": provider_name, "provider_id": provider_id, "conversation_id": conversation["id"] if conversation else "new",
             })
 
+        # Лимит расхода на один чат: каждое сообщение заново отправляет историю, длинный чат дорожает — до обращения к LLM.
+        self._assert_chat_budget(conversation, plan["report"]["total"])
+
         # 5. LLM Gateway. Контекст бронируется в лимите до вызова (параллельные вкладки видят бронь), после ответа бронь
         # заменяется фактическим расходом, при отказе возвращается.
         reserved = plan["report"]["total"]
@@ -232,11 +235,12 @@ class ChatService:
             self.conversations.set_context_report(assistant_message_id, {**report, "fallback_from": result.fallback_from,
                                                                          "truncated": result.truncated()})
             self.conversations.set_model(cid, model_id)
+            self.conversations.add_spent(cid, charged)
             if project_id is not None:
                 self.projects.touch(project_id)
             return {
                 "conversation": {"id": cid, "title": str(conv["title"]), "provider_id": provider_id, "project_id": project_id,
-                                 "pinned": bool(conv.get("pinned") or False)},
+                                 "pinned": bool(conv.get("pinned") or False), **self.chat_budget(int(conv.get("tokens_spent") or 0) + charged)},
                 "created": bool(conv.get("created")),
                 "user_message_id": user_message_id,
                 "assistant_message_id": assistant_message_id,
@@ -547,6 +551,20 @@ class ChatService:
                 f"Сообщение вместе с инструкциями не помещается в контекст выбранной модели (нужно ~{e.required} токенов, доступно {e.budget}). "
                 "Сократите сообщение или выберите модель с бо́льшим окном.", 422) from None
 
+    def chat_budget(self, spent: int) -> dict:
+        """Расход токенов чата и лимит (0 — без ограничения) — для интерфейса."""
+        return {"tokens_spent": int(spent), "token_limit": max(0, php_int(self.settings.get("chat_token_limit")))}
+
+    def _assert_chat_budget(self, conversation: dict | None, needed: int) -> None:
+        """Чат, в котором расход вместе со следующим запросом превысит лимит, закрыт для новых сообщений: нужен новый чат."""
+        limit = self.chat_budget(0)["token_limit"]
+        spent = int(conversation.get("tokens_spent") or 0) if conversation else 0
+        if limit and spent + needed > limit:
+            raise ChatException(
+                "chat_limit",
+                f"Этот чат израсходовал лимит токенов ({spent:,} из {limit:,}): каждое сообщение заново отправляет модели всю историю, "
+                "и дальше разговор стоил бы слишком дорого. Начните новый чат — для новой темы так и лучше.".replace(",", " "), 429)
+
     def maintain_context(self, user: ChatUser, task: dict) -> None:
         """Обслуживание контекста после ответа (ответ уже отдан): сводка ранней части диалога и состояние проекта.
         Сбой не влияет на пользователя; токены сводок списываются с его лимита."""
@@ -571,6 +589,7 @@ class ChatService:
                                                                                  allowed_models, auto))
         if self.summaries.spent_tokens > 0:
             self.usage.record(owner, self.summaries.spent_tokens)
+            self.conversations.add_spent(task["conversation_id"], self.summaries.spent_tokens)   # сводки тоже расходуют токены чата
 
     def _outbound_step(self, user: ChatUser, task: dict, kind: str, model: dict, call) -> bool:
         """Шаг обслуживания контекста с записью в телеметрию; обращение к LLM состоялось, если выросли потраченные токены.

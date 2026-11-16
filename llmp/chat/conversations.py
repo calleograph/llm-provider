@@ -26,7 +26,7 @@ def _conversation(r) -> dict:
         "id": int(r["id"]), "title": str(r["title"]),
         "provider_id": int(r["provider_id"]) if r["provider_id"] is not None else None,
         "project_id": int(r["project_id"]) if r["project_id"] is not None else None,
-        "pinned": bool(r["pinned"]), "created_at": str(r["created_at"]), "updated_at": str(r["updated_at"]),
+        "pinned": bool(r["pinned"]), "tokens_spent": int(r["tokens_spent"] or 0), "created_at": str(r["created_at"]), "updated_at": str(r["updated_at"]),
     }
 
 
@@ -38,14 +38,14 @@ class ConversationRepository:
         """Как в ChatGPT: последние использованные сверху."""
         limit = max(1, min(1000, limit))
         rows = self.conn.execute(
-            "SELECT id, title, provider_id, project_id, pinned, created_at, updated_at FROM llm_conversations "
+            "SELECT id, title, provider_id, project_id, pinned, tokens_spent, created_at, updated_at FROM llm_conversations "
             f"WHERE owner_key = ? ORDER BY updated_at DESC, id DESC LIMIT {limit}", (owner_key,),
         ).fetchall()
         return [_conversation(r) for r in rows]
 
     def find_owned(self, conversation_id: int, owner_key: str) -> dict | None:
         row = self.conn.execute(
-            "SELECT id, owner_key, title, provider_id, created_at, updated_at, pinned, project_id, model_id, "
+            "SELECT id, owner_key, title, provider_id, created_at, updated_at, pinned, project_id, model_id, tokens_spent, "
             "CAST(instructions_z AS BLOB) AS instructions_z, style FROM llm_conversations WHERE id = ? AND owner_key = ?",
             (conversation_id, owner_key),
         ).fetchone()
@@ -88,6 +88,10 @@ class ConversationRepository:
 
     def touch(self, conversation_id: int, provider_id: int) -> None:
         self.conn.execute("UPDATE llm_conversations SET provider_id = ?, updated_at = ? WHERE id = ?", (provider_id, now_iso(), conversation_id))
+
+    def add_spent(self, conversation_id: int, tokens: int) -> None:
+        """Расход токенов чата (ответы и сводки) — для лимита на один чат."""
+        self.conn.execute("UPDATE llm_conversations SET tokens_spent = MAX(0, tokens_spent + ?) WHERE id = ?", (int(tokens), conversation_id))
 
     def set_model(self, conversation_id: int, model_id: int) -> None:
         """Модель диалога (llm_models.id) — чат восстанавливает выбор при открытии."""

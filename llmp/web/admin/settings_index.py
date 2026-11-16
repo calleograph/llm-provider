@@ -25,6 +25,7 @@ _RAW = [
     ("llm_providers", "Системная инструкция для всех нейросетей", "system_prompt", "CHAT_SYSTEM_PROMPT"),
     ("llm_providers", "Лимит истории, передаваемой в модель", "history_max_chars", "CHAT_HISTORY_MAX_CHARS"),
     ("llm_providers", "Максимальная длина сообщения", "max_message_chars", "CHAT_MAX_MESSAGE_CHARS"),
+    ("llm_providers", "Лимит токенов на один чат", "chat_token_limit", "CHAT_TOKEN_LIMIT"),
     # llm_users — «Пользователи чата» (блок «Хранение»)
     ("llm_users", "Хранить неиспользуемые чаты, дней", "retention_days", "CHAT_RETENTION_DAYS"),
     ("llm_users", "Объём источников проекта", "project_sources_max_chars", "PROJECT_SOURCES_MAX_CHARS"),
