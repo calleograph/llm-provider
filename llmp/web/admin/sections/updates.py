@@ -108,11 +108,13 @@ def handle(page: AdminPage):
         return _log_json(page)
     if page.is_post("helper_request") and page.post("helper_action") in ("check", "update"):
         _helper_request(page, x / "inbox")
+        return page.redirect_after_post()
     elif page.is_post("helper_cancel") and page.csrf_ok():
         # запрос, который помощник не забрал: приложение владеет inbox и может его снять — иначе кнопки заблокированы навсегда
         (x / "inbox" / "request.txt").unlink(missing_ok=True)
         page.module.events.admin(page.admin, page.ip, "maintenance_request_cancel", True, {})
         page.flash_success = "Запрос отменён."
+        return page.redirect_after_post()
 
     helper = _read_json(x / "helper.json")
     beat = _iso_ts(helper.get("at", "")) if isinstance(helper, dict) else 0

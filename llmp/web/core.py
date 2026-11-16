@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sqlite3
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -117,9 +118,12 @@ def asset(path: str) -> str:
         rel = rel[3:]
     f = paths.ROOT / "public" / rel
     if f.is_file():
+        # коммит сборки и размер файла (не время изменения: у образов app и nginx оно разное, а статику отдаёт nginx)
         st = f.stat()
-        # формат версии PHP: md5(filemtime . filesize), первые 10 знаков
-        return path + "?v=" + hashlib.md5(f"{int(st.st_mtime)}{st.st_size}".encode()).hexdigest()[:10]
+        build = os.environ.get("APP_GIT_COMMIT", "")
+        if build in ("", "unknown"):
+            build = str(int(st.st_mtime))   # без данных сборки (разработка) — по времени изменения
+        return path + "?v=" + hashlib.md5(f"{build}{st.st_size}".encode()).hexdigest()[:10]
     return path
 
 

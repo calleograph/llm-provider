@@ -104,6 +104,7 @@ def handle(page: AdminPage) -> str:
     exchange = exchange_dir()
     if page.is_post("helper_request"):
         _helper_request(page, exchange / "inbox")
+        return page.redirect_after_post()
 
     anon_code, anon = _ready("ANONYMIZER_URL")
     asr_on = os.environ.get("ASR_ENABLED") == "1"

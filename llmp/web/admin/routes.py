@@ -167,6 +167,9 @@ async def admin_index(request: Request):
     admin = AdminSession.username(s) or ""
     page = AdminPage(request=request, ctx=c, module=module, section=section, method=request.method, action=action,
                      form=form, admin=admin, admin_method=AdminSession.method(s) or "")
+    flash = s.pop("admin_flash", None)   # сообщение после редиректа PRG (AdminPage.redirect_after_post)
+    if isinstance(flash, dict):
+        page.flash_success, page.flash_error = flash.get("ok"), flash.get("error")
     try:
         name = f"{__package__}.sections.{section}"
         try:

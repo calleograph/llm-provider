@@ -489,7 +489,7 @@ function initUpdateTerminal() {
     } else if (!d.running && d.action === 'update' && d.state === 'done') {
       result.hidden = false; result.className = 'alert alert-success';
       result.innerHTML = 'Обновление выполнено: проверки пройдены. <button type="button" class="btn btn-small btn-primary">Обновить страницу</button>';
-      result.querySelector('button').addEventListener('click', function () { location.reload(); });
+      result.querySelector('button').addEventListener('click', function () { location.assign('index.php?section=updates'); });
     } else if (!d.running && d.action === 'update' && d.state === 'failed') {
       result.hidden = false; result.className = 'alert alert-error';
       result.textContent = 'Обновление остановилось. Данные, настройки и модели не затронуты; если переключение уже произошло — вернулась прежняя версия. Причина — в последних строках журнала. Исправьте её и нажмите «Обновить» снова (повтор безопасен) или выполните sudo scripts/update.sh на сервере.';
@@ -508,9 +508,9 @@ function initUpdateTerminal() {
         if (follow.checked) screen.scrollTop = screen.scrollHeight;
         if (d.running || d.state) box.hidden = false;
         render(d);
-        if (d.stuck && box.getAttribute('data-stuck') !== '1') { location.reload(); return; }   // страница покажет причину и кнопку отмены
+        if (d.stuck && box.getAttribute('data-stuck') !== '1') { location.assign('index.php?section=updates'); return; }   // страница покажет причину и кнопку отмены
         // действие закончилось, пока окно было открыто, — перечитать страницу: версии, история, кнопки
-        if (wasRunning && !d.running && d.action === 'check') { location.reload(); return; }
+        if (wasRunning && !d.running && d.action === 'check') { location.assign('index.php?section=updates'); return; }
         wasRunning = d.running;
         schedule(d.running ? 1500 : 8000);
       })

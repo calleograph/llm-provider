@@ -76,6 +76,13 @@ class AdminPage:
     def csrf(self) -> str:
         return self.ctx.csrf
 
+    def redirect_after_post(self):
+        """PRG: результат POST показывается на GET той же страницы, сообщение — через сессию. Так обновление страницы
+        (в том числе location.reload() из скриптов) не отправляет форму повторно."""
+        from fastapi.responses import RedirectResponse
+        self.ctx.session["admin_flash"] = {"ok": self.flash_success, "error": self.flash_error}
+        return RedirectResponse(f"index.php?section={self.section}", status_code=303)
+
     def render(self, template: str, **context: Any) -> str:
         """Шаблон раздела с общими переменными: page, csrf, flash, admin."""
         return templates.get_template(template).render(page=self, csrf=self.csrf, **context)

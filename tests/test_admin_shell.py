@@ -471,3 +471,20 @@ def test_updates_stuck_request_can_be_cancelled(admin, monkeypatch, tmp_path):
     r = admin.post("/admin/index.php?section=updates&action=helper_cancel", data={"csrf": csrf_of(page)})
     assert "Запрос отменён" in r.text and not req.exists()
     assert "Помощник не забирает запрос" not in r.text
+
+
+def test_updates_post_is_redirected_and_scripts_never_reload_the_post_page(admin, monkeypatch, tmp_path):
+    """Ответ на POST — редирект на GET (PRG), а скрипт раздела не вызывает location.reload(): иначе перезагрузка страницы,
+    полученной через POST, снова отправляла «Проверить сейчас» и цикл запросов к помощнику не прекращался."""
+    x = tmp_path / "upd"
+    (x / "inbox").mkdir(parents=True)
+    monkeypatch.setenv("UPDATER_DIR", str(x))
+    (x / "helper.json").write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pid": 1}))
+    tok = csrf_of(admin.get("/admin/index.php?section=updates").text)
+    r = admin.post("/admin/index.php?section=updates&action=helper_request", data={"csrf": tok, "helper_action": "check"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "index.php?section=updates"
+    page = admin.get("/admin/index.php?section=updates")
+    assert "передан помощнику" in page.text, "сообщение пережило редирект"
+    assert "передан помощнику" not in admin.get("/admin/index.php?section=updates").text, "и показывается один раз"
+    js = (paths.ROOT / "public" / "assets" / "js" / "app.js").read_text(encoding="utf-8")
+    assert "location.reload()" not in js
