@@ -103,7 +103,7 @@ UNIT
       printf '{"at":"%s","pid":%d}\n' "$(date -u +%FT%TZ)" $$ > "$X/helper.json"
       if [ $(( $(date +%s) - last )) -ge 60 ]; then "$REPO_ROOT/scripts/ctl.sh" status --json > "$X/host-status.json.tmp" 2>/dev/null && mv -f "$X/host-status.json.tmp" "$X/host-status.json" && chmod 644 "$X/host-status.json"; last=$(date +%s); fi
       if [ -e "$X/inbox/request.txt" ]; then
-        rm -f "$X/request.processing"; mv -f "$X/inbox/request.txt" "$X/request.processing" 2>/dev/null || { sleep 2; continue; }
+        rm -f "$X/request.processing"; mv -f "$X/inbox/request.txt" "$X/request.processing" 2>/dev/null || { json_status failed rejected "помощник не может забрать запрос из $X/inbox (права): sudo scripts/ctl.sh repair"; sleep 20; continue; }
         if parse_request "$X/request.processing"; then run_action; else json_status failed rejected "запрос отклонён: неверный формат"; fi
         rm -f "$X/request.processing"
         # после обновления — перезапуск самого помощника уже из нового кода (иначе он работал бы старой версией до перезагрузки)

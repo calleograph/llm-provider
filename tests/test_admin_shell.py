@@ -451,3 +451,23 @@ def test_check_account_and_admin_group_are_separate(admin, monkeypatch):
     assert "DN группы администраторов обновлён" in post("update_admin_group", admin_group_dn="CN=ok").text
     assert c.execute("SELECT admin_group_dn FROM ldap_configs").fetchone()[0] == "CN=ok"
     assert "svc@corp.local" in _FakeLdap.binds
+
+
+def test_updates_stuck_request_can_be_cancelled(admin, monkeypatch, tmp_path):
+    """Помощник жив, но запрос лежит дольше 30 с (нет прав забрать): раздел говорит причину и даёт «Отменить запрос»."""
+    import os
+    x = tmp_path / "upd"
+    (x / "inbox").mkdir(parents=True)
+    monkeypatch.setenv("UPDATER_DIR", str(x))
+    (x / "helper.json").write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pid": 1}))
+    req = x / "inbox" / "request.txt"
+    req.write_text("action=update\nid=aabbccddeeff0011\n")
+    assert admin.get("/admin/index.php?section=updates&action=log").json()["stuck"] is False   # свежий запрос — ещё нормально
+    old = time.time() - 120
+    os.utime(req, (old, old))
+    assert admin.get("/admin/index.php?section=updates&action=log").json()["stuck"] is True
+    page = admin.get("/admin/index.php?section=updates").text
+    assert "Помощник не забирает запрос" in page and "scripts/ctl.sh repair" in page and 'data-stuck="1"' in page
+    r = admin.post("/admin/index.php?section=updates&action=helper_cancel", data={"csrf": csrf_of(page)})
+    assert "Запрос отменён" in r.text and not req.exists()
+    assert "Помощник не забирает запрос" not in r.text

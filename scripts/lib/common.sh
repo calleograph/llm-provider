@@ -121,7 +121,7 @@ app_commit() { git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo
 prepare_data_dirs() {
   # updater — владелец репозитория (от его имени работает помощник), приложение только читает; его запросы — в updater/inbox
   run mkdir -p "$DATA_ROOT"/{app,updater/inbox,models/gigaam,backups}
-  run docker run --rm -v "$DATA_ROOT:/d" "${HELPER_IMAGE:-alpine:3.21}" sh -c "chown -R 33:33 /d/app /d/updater/inbox && chmod 750 /d/app && chmod 770 /d/updater/inbox \
+  run docker run --rm -v "$DATA_ROOT:/d" "${HELPER_IMAGE:-alpine:3.21}" sh -c "chown -R 33:33 /d/app /d/updater/inbox && chown 33:$(stat -c %g "$REPO_ROOT") /d/updater/inbox && chmod 750 /d/app && chmod 770 /d/updater/inbox \
     && chown $(stat -c %u:%g "$REPO_ROOT") /d/updater && chmod 755 /d/updater && find /d/updater -maxdepth 1 -type l -delete && chmod -R a+rX /d/models"
 }
 

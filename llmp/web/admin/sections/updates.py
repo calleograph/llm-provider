@@ -20,6 +20,7 @@ from .maintenance import _helper_request, _iso_ts, _read_json, exchange_dir
 
 CHECK_KEY = "update_last_check"
 LOG_CHUNK = 256 * 1024
+STUCK_AFTER = 30   # секунд: помощник забирает запрос за ~3 с, дольше — он не может его забрать (права, сбой)
 _STEP = re.compile(r"^\[(\d+)/(\d+)\] (.+)$", re.M)
 
 
@@ -59,7 +60,12 @@ def _log_file(x):
 def _state(x) -> dict:
     """Состояние для окна-терминала: действие, этап, итог (из status.json и вывода)."""
     status = _read_json(x / "status.json") or {}
-    pending = (x / "inbox" / "request.txt").is_file()
+    req = x / "inbox" / "request.txt"
+    pending = req.is_file()
+    try:
+        stuck = pending and time.time() - req.stat().st_mtime > STUCK_AFTER
+    except OSError:
+        stuck = False
     try:
         text = _log_file(x).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -68,7 +74,7 @@ def _state(x) -> dict:
     n, total, name = (int(steps[-1][0]), int(steps[-1][1]), steps[-1][2]) if steps else (0, 0, "")
     return {"state": "pending" if pending else status.get("state", ""), "action": status.get("action", ""),
             "at": str(status.get("at", ""))[:19].replace("T", " "), "message": str(status.get("message", "")),
-            "step": n, "steps": total, "step_name": name, "running": pending or status.get("state") == "running"}
+            "step": n, "steps": total, "step_name": name, "running": pending or status.get("state") == "running", "stuck": stuck}
 
 
 def _log_json(page: AdminPage) -> JSONResponse:
@@ -102,6 +108,11 @@ def handle(page: AdminPage):
         return _log_json(page)
     if page.is_post("helper_request") and page.post("helper_action") in ("check", "update"):
         _helper_request(page, x / "inbox")
+    elif page.is_post("helper_cancel") and page.csrf_ok():
+        # запрос, который помощник не забрал: приложение владеет inbox и может его снять — иначе кнопки заблокированы навсегда
+        (x / "inbox" / "request.txt").unlink(missing_ok=True)
+        page.module.events.admin(page.admin, page.ip, "maintenance_request_cancel", True, {})
+        page.flash_success = "Запрос отменён."
 
     helper = _read_json(x / "helper.json")
     beat = _iso_ts(helper.get("at", "")) if isinstance(helper, dict) else 0

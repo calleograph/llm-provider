@@ -508,6 +508,7 @@ function initUpdateTerminal() {
         if (follow.checked) screen.scrollTop = screen.scrollHeight;
         if (d.running || d.state) box.hidden = false;
         render(d);
+        if (d.stuck && box.getAttribute('data-stuck') !== '1') { location.reload(); return; }   // страница покажет причину и кнопку отмены
         // действие закончилось, пока окно было открыто, — перечитать страницу: версии, история, кнопки
         if (wasRunning && !d.running && d.action === 'check') { location.reload(); return; }
         wasRunning = d.running;
