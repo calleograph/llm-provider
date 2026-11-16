@@ -409,3 +409,45 @@ def test_admin_menu_icons_are_unique_for_every_section():
     icons = dict(re.findall(r"^\s*'(\w+)': '(.+?)',?$", src, re.M))
     assert set(SECTION_LABELS) <= set(icons), "каждому разделу — своя пиктограмма"
     assert len(set(icons.values())) == len(icons), "пиктограммы не повторяются"
+
+
+# ---- «Доступ к админ-панели»: учётка проверки и группа — два независимых действия ----
+class _FakeLdap:
+    """Подмена LdapClient: учётка svc/good входит, группа «CN=ok» существует."""
+    binds: list = []
+
+    def __init__(self, cfg, ca): ...
+    def connect(self): ...
+    def close(self): ...
+    def bind(self, principal, password):
+        _FakeLdap.binds.append(principal)
+        if password != "good":
+            from llmp.ldap.client import LdapException
+            raise LdapException("invalid_credentials", "bad")
+    def group_exists(self, dn): return dn == "CN=ok"
+    def find_user_dn_by_sam_account_name(self, sam): return None
+
+
+def test_check_account_and_admin_group_are_separate(admin, monkeypatch):
+    from llmp.web.admin.sections import access
+    monkeypatch.setattr(access, "LdapClient", _FakeLdap)
+    monkeypatch.setattr(LlmModule, "ca_bundle_path", lambda self: "x")
+    c = conn()
+    c.execute("INSERT INTO ldap_configs (name, is_active, ldaps_url, host, port, base_dn, domain, netbios_domain, admin_group_dn, "
+              "protocol_version, starttls, network_timeout, created_at, updated_at) VALUES "
+              "('t', 1, 'ldaps://dc.corp.local:636', 'dc.corp.local', 636, 'DC=corp,DC=local', 'corp.local', 'CORP', 'CN=old', 3, 0, 5, '', '')")
+    url = "/admin/index.php?section=access&action="
+
+    def post(action, **data):
+        return admin.post(url + action, data={"csrf": csrf_of(admin.get("/admin/index.php?section=access").text), **data})
+
+    # без сохранённой учётки группа не проверяется и не меняется
+    assert "Сначала сохраните учётную запись" in post("update_admin_group", admin_group_dn="CN=ok").text
+    # неверный пароль учётку не сохраняет
+    assert "Данные не сохранены" in post("save_check_account", check_username="svc", check_password="bad").text
+    assert "Учётная запись для проверки сохранена" in post("save_check_account", check_username="svc", check_password="good").text
+    # теперь группа проверяется под сохранённой учёткой, без повторного ввода пароля
+    assert "не найдена в каталоге" in post("update_admin_group", admin_group_dn="CN=missing").text
+    assert "DN группы администраторов обновлён" in post("update_admin_group", admin_group_dn="CN=ok").text
+    assert c.execute("SELECT admin_group_dn FROM ldap_configs").fetchone()[0] == "CN=ok"
+    assert "svc@corp.local" in _FakeLdap.binds

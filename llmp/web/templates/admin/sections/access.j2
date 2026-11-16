@@ -1,9 +1,32 @@
+<p class="section-title">Учётная запись для проверки</p>
+<p class="muted">Доменная учётная запись с правом только чтения каталога. Под ней проверяется, что группа существует и состоит ли в ней администратор.
+  Пароль хранится зашифрованным; это та же служебная учётка, что задана в «LDAP-подключениях».</p>
+<dl class="kv">
+  <dt>Сохранённая учётка</dt><dd class="mono">{{ check_user or 'не задана' }}</dd>
+</dl>
+<form method="post" action="index.php?section=access&action=save_check_account">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="check_username">Логин (без домена)</label>
+      <input class="text-input" id="check_username" name="check_username" value="{{ check_user }}" autocomplete="off" required>
+    </div>
+    <div class="field">
+      <label class="field-label" for="check_password">Пароль{% if check_user %} (пусто — оставить прежний){% endif %}</label>
+      <input class="text-input" type="password" id="check_password" name="check_password" autocomplete="new-password"{% if not check_user %} required{% endif %}>
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit"{% if active is none %} disabled{% endif %}>Проверить вход и сохранить</button>
+</form>
+
+<hr class="sep">
+
 <p class="section-title">Группа администраторов Active Directory</p>
-<p class="muted">Пользователи, состоящие в этой группе (прямо или через вложенные группы), могут входить в административную часть доменной учётной записью.</p>
+<p class="muted">Пользователи, состоящие в этой группе (прямо или через вложенные группы), могут входить в административную часть доменной учётной записью.
+  Существование группы проверяется под учётной записью из блока выше.</p>
 <dl class="kv">
   <dt>Текущий DN группы</dt><dd class="mono">{{ active.admin_group_dn if active is not none else '—' }}</dd>
 </dl>
-
 <form method="post" action="index.php?section=access&action=update_admin_group">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="form-row">
@@ -12,18 +35,7 @@
       <input class="text-input" id="admin_group_dn" name="admin_group_dn" value="{{ active.admin_group_dn if active is not none else '' }}" required>
     </div>
   </div>
-  <p class="muted">Для проверки существования группы в каталоге укажите доменные логин/пароль (не сохраняются).</p>
-  <div class="form-row">
-    <div class="field">
-      <label class="field-label">Доменный логин (для проверки)</label>
-      <input class="text-input" name="confirm_username" autocomplete="off">
-    </div>
-    <div class="field">
-      <label class="field-label">Пароль</label>
-      <input class="text-input" type="password" name="confirm_password" autocomplete="off">
-    </div>
-  </div>
-  <button class="btn btn-primary" type="submit">Проверить и сохранить</button>
+  <button class="btn btn-primary" type="submit"{% if not check_user %} disabled title="Сначала сохраните учётную запись для проверки"{% endif %}>Проверить и сохранить группу</button>
 </form>
 
 <hr class="sep">
