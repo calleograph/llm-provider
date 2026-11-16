@@ -94,6 +94,10 @@ UNIT
     [ -d "$X/inbox" ] && [ ! -L "$X/inbox" ] || die "Нет каталога $X/inbox — выполните scripts/ctl.sh repair"
     [ "$(stat -c %u "$X")" = "$(id -u)" ] || die "Каталог $X должен принадлежать пользователю помощника ($(id -un)) — scripts/ctl.sh repair"
     if grep -q '"state":"running"' "$X/status.json" 2>/dev/null; then json_status failed interrupted "операция прервана перезапуском помощника — проверьте scripts/ctl.sh verify; прерванное обновление: scripts/update.sh --recover"; fi
+    # веса речи отсутствуют (например, источник раньше не работал) — дозагрузка в фоне и перезапуск ASR; при обновлении помощник стартует новым кодом
+    if [ "${ASR_ENABLED:-1}" = 1 ] && [ ! -f "$DATA_ROOT/models/gigaam/${ASR_MODEL_NAME:-v3_e2e_rnnt}.ckpt" ]; then
+      ( "$REPO_ROOT/scripts/models.sh" --restart > "$X/models-output.txt" 2>&1 ; chmod 644 "$X/models-output.txt" ) &
+    fi
     last=0
     while [ "$STOP_EARLY" = 0 ]; do
       printf '{"at":"%s","pid":%d}\n' "$(date -u +%FT%TZ)" $$ > "$X/helper.json"

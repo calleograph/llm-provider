@@ -9,6 +9,7 @@
 #   scripts/ctl.sh diag              архив диагностики с маскированием секретов
 #   scripts/ctl.sh repair            безопасное восстановление: права каталогов, перезапуск нездоровых служб своего проекта
 #   scripts/ctl.sh start|stop|restart
+#   scripts/ctl.sh models            скачать веса распознавания речи, если их нет
 #   scripts/ctl.sh admin-reset       новый пароль аварийного администратора (печатается один раз)
 #   scripts/ctl.sh backup|restore|update|rollback ...   → scripts/backup.sh, restore.sh, update.sh, rollback.sh
 set -euo pipefail
@@ -112,6 +113,6 @@ except OSError: print("CLOSED")' 2>/dev/null || echo CLOSED)"
   stop) dc stop ;;
   restart) dc restart ${1:+"$1"} ;;
   admin-reset) dc exec -T app python -m llmp.cli admin-reset --text ;;
-  backup|restore|update|rollback) exec "$(dirname "$0")/$cmd.sh" "$@" ;;
+  backup|restore|update|rollback|models) exec "$(dirname "$0")/$cmd.sh" "$@" ;;
   *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

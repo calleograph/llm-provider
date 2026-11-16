@@ -116,6 +116,9 @@ main() {
     k="${line%%=*}"; grep -qE "^${k}=" "$ENV_FILE" || { printf '%s\n' "$line" >> "$ENV_FILE"; say "Новый параметр .env: $k"; }
   done < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$REPO_ROOT/.env.example")
 
+  # Веса речи: на установках, где их нет (источник раньше не работал), появляются при обновлении. Сбой загрузки обновление не останавливает.
+  "$(dirname "$0")/models.sh" 2>&1 || warn "Модель распознавания речи не загружена: голосовой ввод заработает после scripts/ctl.sh models"
+
   echo "build $FROM $TO $BACKUP" > "$STATE"
   export APP_VERSION; APP_VERSION="$(app_version)"; export APP_GIT_COMMIT="$TO"; export IMAGE_TAG="$TO"
   say "Сборка образов $TO (прежняя версия продолжает работать)"

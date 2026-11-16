@@ -187,37 +187,7 @@ stage_config() {
 
 stage_models() {
   [ "$VOICE" = 1 ] || { info "Голосовой ввод выключен — модели ASR не нужны"; return 0; }
-  local dest="$DATA_ROOT/models/gigaam" name="${ASR_MODEL_NAME:-v3_e2e_rnnt}" base f src sum want min rc
-  base="${GIGAAM_MODEL_BASE_URL:-https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM}"
-  # нижняя граница размера: чекпойнт ~450 МБ, токенайзер ~250 КБ — меньше значит обрыв или страница прокси вместо файла
-  for f in "$name.ckpt:${GIGAAM_CKPT_SHA256:-}:100000000" "${name}_tokenizer.model:${GIGAAM_TOKENIZER_SHA256:-}:100000"; do
-    IFS=: read -r src want min <<<"$f"
-    if [ -f "$dest/$src" ] && [ "$(stat -c %s "$dest/$src")" -ge "$min" ] && { [ -z "$want" ] || [ "$(sha256sum "$dest/$src" | cut -d' ' -f1)" = "$want" ]; }; then ok "Модель ASR: $src на месте"; continue; fi
-    if [ -n "$MODELS_FROM" ]; then
-      [ -f "$MODELS_FROM/$src" ] || fail_stage models "в каталоге $MODELS_FROM нет файла $src"
-      run cp -f "$MODELS_FROM/$src" "$dest/$src.part"
-    else
-      info "Загрузка $src с $base (чекпойнт ~450 МБ, докачка при обрыве)"
-      rc=0; run curl -fL --retry 4 --retry-delay 5 --connect-timeout 20 --speed-limit 10240 --speed-time 60 -C - -o "$dest/$src.part" "$base/$src" || rc=$?
-      case "$rc" in
-        0) ;;
-        6) fail_stage models "не удалось скачать $src: имя $base не разрешается (DNS). Нужен прокси — задайте HTTPS_PROXY; закрытая сеть — --models-from КАТАЛОГ" ;;
-        7|28) fail_stage models "не удалось скачать $src: нет соединения или тайм-аут до $base. Повторный запуск продолжит загрузку; закрытая сеть — --models-from КАТАЛОГ" ;;
-        35|51|58|60) fail_stage models "не удалось скачать $src: ошибка TLS (код curl $rc; 60 — сертификат источника недействителен или истёк). Проверку не отключаем: скачайте файлы на другом компьютере или укажите зеркало в GIGAAM_MODEL_BASE_URL, затем ./install.sh --from models --models-from КАТАЛОГ" ;;
-        22) fail_stage models "не удалось скачать $src: сервер ответил ошибкой HTTP. Проверьте GIGAAM_MODEL_BASE_URL и ASR_MODEL_NAME в .env" ;;
-        *) fail_stage models "не удалось скачать $src (код curl $rc). Повторный запуск продолжит загрузку; закрытая сеть — ./install.sh --from models --models-from КАТАЛОГ" ;;
-      esac
-    fi
-    if [ "$DRY_RUN" != 1 ]; then
-      if [ "$(stat -c %s "$dest/$src.part")" -lt "$min" ] || head -c 512 "$dest/$src.part" | grep -qi '<html\|<!doctype'; then
-        mv -f "$dest/$src.part" "$dest/$src.failed"; fail_stage models "$src слишком мал или это HTML-страница (прокси, вход в сеть) — файл не принят ($dest/$src.failed)"
-      fi
-      sum="$(sha256sum "$dest/$src.part" | cut -d' ' -f1)"
-      [ -z "$want" ] || [ "$sum" = "$want" ] || { mv -f "$dest/$src.part" "$dest/$src.failed"; fail_stage models "контрольная сумма $src не совпала с заданной в .env — файл не принят ($dest/$src.failed)"; }
-      mv -f "$dest/$src.part" "$dest/$src"; chmod a+r "$dest/$src"
-      ok "Модель ASR: $src ($(du -h "$dest/$src" | cut -f1)${want:+, SHA-256 совпала})"
-    fi
-  done
+  scripts/models.sh ${MODELS_FROM:+--from-dir "$MODELS_FROM"} || fail_stage models "модель распознавания речи не загружена (причины выше)"
 }
 
 stage_build() {
