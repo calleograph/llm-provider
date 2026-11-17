@@ -20,7 +20,7 @@
     <div class="card pwd-card admin-login-card">
       <div class="admin-login-heading">
         <h1>Вход в администрирование</h1>
-        <p class="lead">Используйте доменную учётную запись из группы администраторов или локальный аварийный доступ.</p>
+        <p class="lead">Войдите доменной учётной записью администратора (из группы или списка администраторов) или через локальный аварийный доступ.</p>
       </div>
 
 {% if error_message is not none %}
@@ -33,7 +33,7 @@
       <div class="pwd-field">
         <label class="field-label" for="method">Способ входа</label>
         <select class="text-input" id="method" name="method">
-          <option value="domain"{% if default_method == "domain" %} selected{% endif %}>Доменная учётная запись (группа администраторов)</option>
+          <option value="domain"{% if default_method == "domain" %} selected{% endif %}>Доменная учётная запись</option>
           <option value="local"{% if default_method == "local" %} selected{% endif %}>Локальный аварийный администратор</option>
         </select>
       </div>

@@ -24,6 +24,7 @@
   <dt>Нейросеть и модель</dt><dd>{{ record.provider_name or '—' }} · {{ record.model_name or '—' }}{% if record.fallback_from %} <span class="muted">(резерв вместо «{{ record.fallback_from }}»)</span>{% endif %}</dd>
   <dt>Диалог</dt><dd>{% if record.conversation_id %}<a href="{{ url(view='conversation', id=record.conversation_id) }}">№{{ record.conversation_id }}</a>{% else %}—{% endif %}{% if record.project_id %} · проект №{{ record.project_id }}{% endif %}</dd>
   <dt>DLP</dt><dd>{% for h in record.dlp %}{{ sev_badge(h.severity, h.name ~ ' · ' ~ h.hits) }} {% else %}срабатываний нет{% endfor %}</dd>
+  {% if record.user_flag_at %}<dt>Отметка пользователя</dt><dd><span class="badge tele-badge-raw">не обезличено</span> <span class="muted">{{ record.user_flag_at[:16]|replace('T', ' ') }}</span></dd>{% endif %}
   <dt>Разбор</dt><dd>{% if record.review %}{{ review_badge(record.review) }} <span class="muted">{{ record.reviewed_by }}, {{ record.reviewed_at[:16]|replace('T', ' ') }}</span>{% else %}не разобрана{% endif %}</dd>
   <dt>Обезличивание</dt><dd>{% if record.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% else %}обезличено{% endif %}</dd>
   <dt>Вложения</dt><dd>{% if record.attachment_count %}{{ record.attachment_count }} ({{ record.attachment_types }}){% else %}нет{% endif %}</dd>
@@ -204,11 +205,12 @@
           {% if r.outcome != 'ok' %}{{ outcome(r.outcome) }}{% endif %}
           <span class="audit-links"><a href="{{ url(view='record', id=r.id, q=f.q) }}">Карточка</a>{% if r.conversation_id %} · <a href="{{ url(view='conversation', id=r.conversation_id) }}">Диалог</a>{% endif %}</span>
         </div>
-        {% if r.dlp or r.unanonymized or r.attachment_count or r.review %}
+        {% if r.dlp or r.unanonymized or r.attachment_count or r.review or r.user_flag_at %}
         <div class="audit-entry-tags">
           {{ review_badge(r.review) }}
           {% for h in r.dlp %}<a class="badge audit-sev audit-sev-{{ h.severity }}" href="{{ url(**dict(args, rule=h.rule_id)) }}" title="{{ severities[h.severity] }} · совпадений: {{ h.hits }}">{{ h.name }}</a>{% endfor %}
           {% if r.unanonymized %}<span class="badge tele-badge-raw">без обезличивания</span>{% endif %}
+          {% if r.user_flag_at %}<span class="badge tele-badge-raw" title="Пользователь отметил: в сообщении осталось что-то не обезличенное. Проверьте текст и дополните словарь или шаблоны обезличивания.">пользователь: не обезличено</span>{% endif %}
           {% if r.attachment_count %}<span class="badge badge-inactive">вложений: {{ r.attachment_count }}</span>{% endif %}
         </div>
         {% endif %}

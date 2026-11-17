@@ -62,7 +62,7 @@ class ConversationRepository:
     def messages(self, conversation_id: int, owner_key: str) -> list[dict]:
         rows = self.conn.execute(
             "SELECT m.id, m.role, m.content, CAST(m.content_z AS BLOB) AS content_z, m.provider_id, m.model, m.attachment_type, "
-            "m.attachment_size, m.unanonymized, m.context_report, m.created_at "
+            "m.attachment_size, m.unanonymized, m.context_report, m.created_at, m.outbound_id IS NOT NULL AS can_flag "
             "FROM llm_messages m JOIN llm_conversations c ON c.id = m.conversation_id "
             "WHERE m.conversation_id = ? AND c.owner_key = ? ORDER BY m.id",
             (conversation_id, owner_key),
@@ -72,19 +72,27 @@ class ConversationRepository:
             row = dict(r)
             row["content"] = compact.decode(row["content"], row.pop("content_z"))
             row["unanonymized"] = bool(row["unanonymized"])
+            row["can_flag"] = bool(row["can_flag"])
             result.append(row)
         return result
 
     def add_message(self, conversation_id: int, role: str, content: str, provider_id: int | None, model: str | None,
                     attachment_type: str | None, attachment_size: int | None, tokens: int | None = None,
-                    unanonymized: bool = False) -> int:
+                    unanonymized: bool = False, outbound_id: int | None = None) -> int:
         text, z = compact.encode(content)
         cur = self.conn.execute(
-            "INSERT INTO llm_messages (conversation_id, role, content, content_z, provider_id, model, attachment_type, attachment_size, tokens, unanonymized, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, role, text, z, provider_id, model, attachment_type, attachment_size, tokens, 1 if unanonymized else 0, now_iso()),
+            "INSERT INTO llm_messages (conversation_id, role, content, content_z, provider_id, model, attachment_type, attachment_size, tokens, unanonymized, "
+            "outbound_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, role, text, z, provider_id, model, attachment_type, attachment_size, tokens, 1 if unanonymized else 0, outbound_id, now_iso()),
         )
         return int(cur.lastrowid)
+
+    def flag_unmasked(self, conversation_id: int, message_id: int, owner_key: str) -> bool:
+        """Пользователь отметил своё сообщение: «здесь не обезличено» — запись ленты аудита попадает в «Не разобрано»."""
+        return self.conn.execute(
+            "UPDATE llm_outbound SET user_flag_at = COALESCE(user_flag_at, ?) WHERE id = (SELECT m.outbound_id FROM llm_messages m "
+            "JOIN llm_conversations c ON c.id = m.conversation_id WHERE m.id = ? AND m.conversation_id = ? AND c.owner_key = ? AND m.role = 'user') "
+            "AND owner_key = ?", (now_iso(), message_id, conversation_id, owner_key, owner_key)).rowcount > 0
 
     def touch(self, conversation_id: int, provider_id: int) -> None:
         self.conn.execute("UPDATE llm_conversations SET provider_id = ?, updated_at = ? WHERE id = ?", (provider_id, now_iso(), conversation_id))

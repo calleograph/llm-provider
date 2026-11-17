@@ -32,7 +32,7 @@ EXPORT_LIMIT = 5000   # shortcut: выгрузка собирается в па�
 PERIODS = {"today": "Сегодня", "1": "Сутки", "7": "7 дней", "30": "30 дней", "custom": "Свой период"}
 TABS = {"feed": "Лента", "overview": "Обзор", "rules": "Правила и хранение"}
 KIND_LABELS = {"chat": "Сообщение", "summary": "Сводка диалога", "project_state": "Состояние проекта"}
-REVIEW_FILTERS = {"todo": "Не разобраны", **REVIEWS}
+REVIEW_FILTERS = {"todo": "Не разобраны", "user": "Отметки пользователей", **REVIEWS}
 RESCAN_DAYS = {"7": "7 дней", "30": "30 дней", "0": "весь журнал"}
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # поля фильтра ленты → параметр адреса
@@ -299,7 +299,8 @@ def handle(page: AdminPage) -> str | Response:
     presets = [("Все", base, tot["requests"], ""), ("Срабатывания DLP", {**base, "sev": 1}, tot["flagged"], ""),
                ("Критичные", {**base, "sev": 3}, tot["critical"], "bad"), ("Не разобраны", {**base, "review": "todo"}, tot["todo"], "warn"),
                ("Инциденты", {**base, "review": "incident"}, tot["incidents"], "bad"),
-               ("Без обезличивания", {**base, "unanon": "1"}, tot["unanonymized"], "warn")]
+               ("Без обезличивания", {**base, "unanon": "1"}, tot["unanonymized"], "warn"),
+               ("Отметки пользователей", {**base, "review": "user"}, tot["user_flags"], "warn")]
     all_rules = [dict(r) for r in m.conn.execute("SELECT id, name, severity FROM dlp_rules ORDER BY position, id")]
     more_open = any(args.get(k) for k in ("user", "model", "kind", "rule", "per")) or f["period"] == "custom"
     return page.render(

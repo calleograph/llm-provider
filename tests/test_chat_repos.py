@@ -225,7 +225,7 @@ def test_unanonymized_flag_is_stored_and_read_back(env):
     env.conversations.add_message(cid, "assistant", "Ответ", env.provider_id, "gpt", None, None, tokens=5)
     msgs = env.conversations.messages(cid, OWNER)
     assert [m["unanonymized"] for m in msgs] == [True, False]
-    assert set(msgs[0]) == {"id", "role", "content", "provider_id", "model", "attachment_type", "attachment_size", "unanonymized", "context_report", "created_at"}
+    assert set(msgs[0]) == {"id", "role", "content", "provider_id", "model", "attachment_type", "attachment_size", "unanonymized", "context_report", "created_at", "can_flag"}
     assert env.conversations.messages(cid, STRANGER) == []
 
 

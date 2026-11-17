@@ -3,10 +3,10 @@
 ARG PYTHON_IMAGE=python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
 FROM ${PYTHON_IMAGE}
 
-# poppler-utils и tesseract (rus+eng) — извлечение текста PDF и OCR сканов.
+# poppler-utils и tesseract (rus+eng) — извлечение текста PDF и OCR сканов; catdoc — старый формат Word (.doc).
 RUN set -eux; \
     apt-get -o Acquire::Retries=5 update; \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng ca-certificates; \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends poppler-utils catdoc tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app

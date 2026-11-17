@@ -210,8 +210,10 @@ class Telemetry:
             where.append("o.id IN (SELECT outbound_id FROM llm_outbound_dlp WHERE rule_id = ?)")
             params.append(int(f["rule_id"]))
         review = f.get("review")
-        if review == "todo":
-            where.append("o.dlp_severity > 0 AND o.review = ''")
+        if review == "user":
+            where.append("o.user_flag_at IS NOT NULL")
+        elif review == "todo":
+            where.append("(o.dlp_severity > 0 OR o.user_flag_at IS NOT NULL) AND o.review = ''")
         elif review in REVIEWS:
             where.append("o.review = ?")
             params.append(review)
@@ -244,8 +246,8 @@ class Telemetry:
         w, p = self._where(base)
         r = self.conn.execute(
             f"SELECT COUNT(*) AS requests, COALESCE(SUM(o.dlp_severity > 0), 0) AS flagged, COALESCE(SUM(o.dlp_severity = 3), 0) AS critical, "
-            f"COALESCE(SUM(o.dlp_severity > 0 AND o.review = ''), 0) AS todo, COALESCE(SUM(o.review = 'incident'), 0) AS incidents, "
-            f"COALESCE(SUM(o.unanonymized), 0) AS unanonymized FROM llm_outbound o WHERE {w}", p).fetchone()
+            f"COALESCE(SUM((o.dlp_severity > 0 OR o.user_flag_at IS NOT NULL) AND o.review = ''), 0) AS todo, COALESCE(SUM(o.review = 'incident'), 0) AS incidents, "
+            f"COALESCE(SUM(o.unanonymized), 0) AS unanonymized, COALESCE(SUM(o.user_flag_at IS NOT NULL), 0) AS user_flags FROM llm_outbound o WHERE {w}", p).fetchone()
         return dict(r)
 
     def _hits(self, ids: list[int]) -> dict[int, list[dict]]:
@@ -298,7 +300,7 @@ class Telemetry:
             f"GROUP BY {col} ORDER BY {order} DESC LIMIT 10", p)]
         d = self.conn.execute(
             f"SELECT COALESCE(SUM(dlp_severity > 0), 0) AS flagged, COALESCE(SUM(dlp_severity = 3), 0) AS critical, "
-            f"COALESCE(SUM(dlp_severity > 0 AND review = ''), 0) AS todo, COALESCE(SUM(review = 'incident'), 0) AS incidents "
+            f"COALESCE(SUM((dlp_severity > 0 OR user_flag_at IS NOT NULL) AND review = ''), 0) AS todo, COALESCE(SUM(review = 'incident'), 0) AS incidents "
             f"FROM llm_outbound WHERE {w}", p).fetchone()
         by_rule = [dict(r) for r in self.conn.execute(
             f"SELECT r.id, r.name, r.severity, COUNT(*) AS records, COUNT(DISTINCT o.owner_key) AS users "
@@ -306,8 +308,8 @@ class Telemetry:
             f"WHERE o.created_at >= ? AND o.created_at < ? GROUP BY r.id ORDER BY r.severity DESC, records DESC", p)]
         top_dlp = [dict(r) for r in self.conn.execute(
             f"SELECT owner_key AS name, COUNT(*) AS records, COALESCE(SUM(dlp_severity = 3), 0) AS critical, "
-            f"COALESCE(SUM(dlp_severity > 0 AND review = ''), 0) AS todo FROM llm_outbound "
-            f"WHERE {w} AND dlp_severity > 0 GROUP BY owner_key ORDER BY critical DESC, records DESC LIMIT 10", p)]
+            f"COALESCE(SUM((dlp_severity > 0 OR user_flag_at IS NOT NULL) AND review = ''), 0) AS todo FROM llm_outbound "
+            f"WHERE {w} AND (dlp_severity > 0 OR user_flag_at IS NOT NULL) GROUP BY owner_key ORDER BY critical DESC, records DESC LIMIT 10", p)]
         return {"totals": {**dict(t), **dict(d)}, "top_tokens": top("owner_key", "tokens"), "top_requests": top("owner_key", "requests"),
                 "top_models": top("model_name", "requests"), "by_rule": by_rule, "top_dlp": top_dlp}
 

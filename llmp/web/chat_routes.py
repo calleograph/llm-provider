@@ -177,7 +177,7 @@ def _index(request: Request, form: FormData | None):
 
     allowed = llm.access.allowed_providers(user.group_ids, user.domain_id, user.owner_key())
     extensions = llm.file_processor.supported_extensions()
-    formats = ", ".join(e for e in ["pdf", "docx", "odt", "xlsx", "txt", "csv", "md"] if e in extensions).upper()
+    formats = ", ".join(e for e in ["pdf", "docx", "doc", "odt", "xlsx", "txt", "csv", "md"] if e in extensions).upper()
     if any(e in extensions for e in ("png", "jpg", "jpeg")):
         formats += ", изображения"
     # Микрофон в браузере доступен только в защищённом контексте (HTTPS или localhost) — иначе кнопка объясняет причину.
@@ -344,6 +344,14 @@ def _api(request: Request, c: Ctx, user: ChatUser, form: FormData | None):
 
         if route == "GET storage":
             return json_response({"storage": storage()})
+
+        if route == "POST message_flag":
+            # «здесь не обезличено»: запись ленты аудита попадает администратору в «Не разобрано» — источник правок словаря
+            cid = php_int(_s(form, "conversation_id", "0"))
+            if not conversations.flag_unmasked(cid, post_id, owner):
+                return _error(404, "Сообщение не найдено.", "not_found")
+            events.user(ip, log_name, _E.OP_ANONYMIZATION, "USER_FLAG_UNMASKED", {"conversation_id": cid, "message_id": post_id})
+            return json_response({"ok": True})
 
         if route == "POST bulk_delete_conversations":
             ids = [php_int(v) for v in (form.getlist("ids[]") or form.getlist("ids")) if isinstance(v, str)]

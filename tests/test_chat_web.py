@@ -287,3 +287,19 @@ def test_own_anonymization_patterns_are_validated():
     assert "internal_terms" not in AnonymizationSettings.validate(ok)
     assert "ошибка в регулярном" in AnonymizationSettings.validate({**ok, "internal_terms": "re:(ДОГ;custom;"})["internal_terms"]
     assert "пустую строку" in AnonymizationSettings.validate({**ok, "internal_terms": "re:\\d*;custom;"})["internal_terms"]
+
+
+def test_user_flags_unmasked_message_for_admin_review(web):
+    """«Здесь не обезличено»: отметка своего сообщения попадает в ленту аудита («Не разобрано», «Отметки пользователей»); чужое и ответ — нет."""
+    from llmp.chat.telemetry import Telemetry
+    web.login()
+    data = web.post("send", {"text": "Письмо для Иванов", "provider_id": str(web.provider_id)}).json()
+    cid, uid, aid = data["conversation"]["id"], data["user_message"]["id"], data["assistant_message"]["id"]
+    assert data["user_message"]["can_flag"] is True
+    assert web.get("conversation", id=str(cid)).json()["messages"][0]["can_flag"] is True
+    assert web.post("message_flag", {"conversation_id": str(cid), "id": str(aid)}).status_code == 404, "ответ модели не отмечается"
+    assert web.post("message_flag", {"conversation_id": "999", "id": str(uid)}).status_code == 404
+    assert web.post("message_flag", {"conversation_id": str(cid), "id": str(uid)}).json() == {"ok": True}
+    t, period = Telemetry(web.conn), {"since": "2000-01-01", "until": "2999-01-01"}
+    rows = t.query({**period, "review": "user"})["rows"]
+    assert len(rows) == 1 and rows[0]["user_flag_at"] and t.counts(period)["todo"] == 1 and t.counts(period)["user_flags"] == 1

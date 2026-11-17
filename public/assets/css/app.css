@@ -323,6 +323,9 @@ input[type="file"].text-input::file-selector-button {
 .field-actions, .log-filter-submit { align-self: end; }
 .section-title { margin: 0 0 var(--s3); color: var(--text); font-size: var(--fs-16); font-weight: 600; line-height: var(--lh-tight); }
 .kv { display: grid; grid-template-columns: minmax(120px, 200px) 1fr; gap: var(--s2) var(--s4); margin: var(--s3) 0; font-size: var(--fs-14); }
+.access-users { display: grid; gap: var(--s2); max-width: 480px; margin: var(--s3) 0; padding: 0; list-style: none; }
+.access-users li { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.access-users form { margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .inline-form { display: inline; }

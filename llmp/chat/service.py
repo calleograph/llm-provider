@@ -228,7 +228,7 @@ class ChatService:
                 self.conversations.touch(int(conv["id"]), provider_id)
             cid = int(conv["id"])
             user_message_id = self.conversations.add_message(cid, "user", user_content.value, provider_id, None, attachment_type,
-                                                             attachment_size, None, skip_anonymization)
+                                                             attachment_size, None, skip_anonymization, outbound_id)
             # ответ на сообщение без обезличивания обычно цитирует те же данные — помечается так же
             assistant_message_id = self.conversations.add_message(cid, "assistant", result.text, result.provider_id or provider_id,
                                                                   result.model, None, None, charged, skip_anonymization)
@@ -258,6 +258,7 @@ class ChatService:
             "user_message": {
                 "id": saved["user_message_id"], "role": "user", "content": user_content.value,
                 "attachment_type": attachment_type, "attachment_size": attachment_size, "unanonymized": skip_anonymization,
+                "can_flag": outbound_id is not None,
             },
             "assistant_message": {
                 "id": saved["assistant_message_id"], "role": "assistant", "content": result.text,

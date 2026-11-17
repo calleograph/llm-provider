@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 
 from .. import paths
 from .base import ExtractedFile, ExtractionResult, FileProcessingException, OcrEngine, StagedFile, TextNormalizer, php_int
-from .extractors import DocxExtractor, ImageOcrExtractor, OdtExtractor, PdfExtractor, PlainTextExtractor, XlsxExtractor, _ext
+from .extractors import DocExtractor, DocxExtractor, ImageOcrExtractor, OdtExtractor, PdfExtractor, PlainTextExtractor, XlsxExtractor, _ext
 from .settings import FileProcessingSettings
 
 T = TypeVar("T")
@@ -31,7 +31,7 @@ class FileProcessor:
     def with_defaults(cls, settings: FileProcessingSettings, tmp_root: str | None = None) -> "FileProcessor":
         ocr = OcrEngine(settings)
         processor = cls(settings, tmp_root or str(paths.llm_tmp()))
-        for extractor in (PlainTextExtractor(), DocxExtractor(ocr), OdtExtractor(ocr), XlsxExtractor(),
+        for extractor in (PlainTextExtractor(), DocxExtractor(ocr), DocExtractor(settings), OdtExtractor(ocr), XlsxExtractor(),
                           PdfExtractor(settings, ocr), ImageOcrExtractor(ocr)):
             processor.register(extractor)
         return processor

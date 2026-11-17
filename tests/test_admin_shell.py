@@ -295,6 +295,8 @@ def _seeded():
     p = kit.create_provider(c, "Polza")
     c.execute("INSERT INTO llm_group_providers (group_id, provider_id) VALUES (?, ?)", (g, p))
     c.execute("INSERT INTO app_settings (key, value) VALUES ('llm_chat_history_max_chars', '5000')")
+    from llmp.auth import set_admin_users
+    set_admin_users(c, d, ["petrov"])   # отдельные администраторы переносятся вместе с подключением
     return c
 
 
@@ -425,7 +427,8 @@ class _FakeLdap:
             from llmp.ldap.client import LdapException
             raise LdapException("invalid_credentials", "bad")
     def group_exists(self, dn): return dn == "CN=ok"
-    def find_user_dn_by_sam_account_name(self, sam): return None
+    def find_user_dn_by_sam_account_name(self, sam): return {"petrov": "CN=Petrov", "admin1": "CN=Admin1"}.get(sam)
+    def is_member_of_group_recursive(self, user_dn, group_dn): return user_dn == "CN=Admin1" and group_dn == "CN=ok"
 
 
 def test_check_account_and_admin_group_are_separate(admin, monkeypatch):
@@ -451,6 +454,20 @@ def test_check_account_and_admin_group_are_separate(admin, monkeypatch):
     assert "DN группы администраторов обновлён" in post("update_admin_group", admin_group_dn="CN=ok").text
     assert c.execute("SELECT admin_group_dn FROM ldap_configs").fetchone()[0] == "CN=ok"
     assert "svc@corp.local" in _FakeLdap.binds
+
+    # отдельные администраторы: добавляется только существующая учётка; вход по списку без группы; после удаления — нет
+    from llmp import auth
+    from llmp.ldap.config import LdapConfigRepository
+    assert "не найдена в каталоге" in post("add_admin_user", admin_user="nobody").text
+    assert "добавлен в администраторы" in post("add_admin_user", admin_user="Petrov").text
+    cfg = LdapConfigRepository(c).find_active()
+    assert auth.admin_users(c, cfg.id) == ["petrov"] and "petrov" in admin.get("/admin/index.php?section=access").text
+    monkeypatch.setattr(auth, "LdapClient", _FakeLdap)
+    ca = type("Ca", (), {"current_bundle_path": lambda self: "x"})()
+    login = lambda user: auth.DomainAdminAuthenticator(cfg, ca, auth.admin_users(c, cfg.id)).authenticate(user, "good")  # noqa: E731
+    assert login("petrov") and login("admin1"), "по списку — без группы; по группе — как раньше"
+    post("remove_admin_user", admin_user="petrov")
+    assert auth.admin_users(c, cfg.id) == [] and not login("petrov")
 
 
 def test_updates_stuck_request_can_be_cancelled(admin, monkeypatch, tmp_path):

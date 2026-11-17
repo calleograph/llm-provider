@@ -268,3 +268,23 @@ def test_process_runner_timeout_and_exit_code(tmp_path):
     with pytest.raises(FileProcessingException) as e:
         ProcessRunner.run([_stub(tmp_path, "slow", "exec sleep 10\n")], 1)
     assert e.value.error_code == "extraction_failed"
+
+
+def test_old_word_doc_goes_through_catdoc_and_fails_closed_without_it(env, tmp_path):
+    """.doc (Word 97–2003): текст — через catdoc (здесь исполняемая заглушка); без catdoc — отказ; не OLE2 — отказ по сигнатуре."""
+    ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 504
+    with pytest.raises(FileProcessingException) as e:
+        env.process(env.file("old.doc", ole))
+    assert e.value.error_code == "tool_unavailable"
+    stub = tmp_path / "bin" / "catdoc"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/sh\nprintf 'Договор поставки\\r\\nИванов Иван\\n'\n")
+    stub.chmod(0o700)
+    env.settings.save({"catdoc_path": str(stub)})
+    env.processor = FileProcessor.with_defaults(env.settings, str(env.tmp_root))
+    result = env.process(env.file("old2.doc", ole))
+    assert (result.extension, result.text) == ("doc", "Договор поставки\nИванов Иван")
+    with pytest.raises(FileProcessingException) as e:
+        env.process(env.file("fake.doc", "просто текст"))
+    assert e.value.error_code == "signature_mismatch"
+    env.assert_no_temp_left()

@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from markupsafe import Markup
 
 from ... import paths
-from ...auth import AdminSession, DomainAdminAuthenticator, LocalAdminRepository
+from ...auth import AdminSession, DomainAdminAuthenticator, LocalAdminRepository, admin_users
 from ...certs import CaBundleBuilder, CertificateRepository
 from ...chat.settings import php_int
 from ...ldap.client import LdapException
@@ -133,7 +133,8 @@ async def admin_index(request: Request):
                     else:
                         config = LdapConfigRepository(c.conn).find_active()
                         if config is not None:
-                            ok = DomainAdminAuthenticator(config, CaBundleBuilder(CertificateRepository(c.conn))).authenticate(username, password)
+                            ok = DomainAdminAuthenticator(config, CaBundleBuilder(CertificateRepository(c.conn)),
+                                                          admin_users(c.conn, config.id)).authenticate(username, password)
                 except (LdapException, RuntimeError, OSError):
                     ok = False
                 if ok:

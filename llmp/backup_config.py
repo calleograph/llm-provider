@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sqlite3
 import time
 import zipfile
 
+from .auth import admin_users, set_admin_users
 from .chat.settings import ChatSettings, php_int
 from .db import now_iso, transaction
 from .domain import DomainGroupRepository, LlmDomainRepository
@@ -68,6 +70,7 @@ class ConfigBackupService:
                 "domain": c.domain, "netbios_domain": c.netbios_domain, "admin_group_dn": c.admin_group_dn,
                 "protocol_version": c.protocol_version, "starttls": c.start_tls, "network_timeout": c.network_timeout,
                 "ca_bundle_file": c.ca_bundle_file, "llm_enabled": d.llm_enabled, "service_username": d.service_username,
+                "admin_users": admin_users(self.conn, c.id),
                 "groups": [{
                     "display_name": str(g["display_name"]), "group_ref": str(g["group_ref"]), "is_enabled": bool(g["is_enabled"]),
                     "allow_unanonymized": bool(g.get("allow_unanonymized") or False),
@@ -178,6 +181,8 @@ class ConfigBackupService:
                 domain_id = self.ldap_configs.create(payload, False)
                 stats["domains_created"] += 1
             self.llm_domains.save_llm_settings(domain_id, bool(dd.get("llm_enabled") or False), str(dd.get("service_username") or ""), None, False)
+            if isinstance(dd.get("admin_users"), list):
+                set_admin_users(self.conn, domain_id, [str(u) for u in dd["admin_users"] if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(u))])
 
             for gd in self._list(dd.get("groups")):
                 if not isinstance(gd, dict) or gd.get("group_ref") is None:

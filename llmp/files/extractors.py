@@ -435,6 +435,28 @@ class PdfExtractor:
         return ExtractionResult(TextNormalizer.clean("\n\n".join(pages)), ocr_pages > 0, len(pages), ocr_pages)
 
 
+class DocExtractor:
+    """Старый формат Word (.doc, Word 97–2003): текст через catdoc. Встроенные картинки не распознаются — как и колонтитулы."""
+
+    def __init__(self, settings: FileProcessingSettings):
+        self.settings = settings
+
+    def extensions(self) -> list[str]:
+        return ["doc"]
+
+    def matches_signature(self, head: bytes) -> bool:
+        return head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")     # контейнер OLE2
+
+    def extract(self, path: str, work_dir: str) -> ExtractionResult:
+        catdoc = self.settings.get("catdoc_path")
+        if not ProcessRunner.is_executable(catdoc):
+            raise FileProcessingException("tool_unavailable", "catdoc не найден: " + catdoc)
+        result = ProcessRunner.run([catdoc, "-d", "utf-8", "-w", path], max(5, php_int(self.settings.get("tool_timeout"))))
+        if result["exit"] != 0:
+            raise FileProcessingException("extraction_failed", f"catdoc exit={result['exit']}: {result['stderr']}")
+        return ExtractionResult(TextNormalizer.clean(TextNormalizer.to_utf8_raw(result["stdout"])), False, 1, 0)
+
+
 class ImageOcrExtractor:
     """Изображения (фото/скан документа) — только локальный OCR; во внешний API изображение не передаётся."""
 

@@ -68,13 +68,25 @@ class LocalAdminRepository:
         return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-class DomainAdminAuthenticator:
-    """Доменная учётная запись, входящая (прямо или через вложенные группы) в группу администраторов AD.
-    Исключения LdapException (неверный пароль, блокировка, недоступность) — вызывающему."""
+def admin_users(conn, config_id: int) -> list[str]:
+    """Отдельные доменные администраторы подключения (sAMAccountName в нижнем регистре) — в дополнение к группе AD."""
+    from .settings import AppSettings
+    return [u for u in (AppSettings(conn).get(f"admin_users_{config_id}") or "").split("\n") if u]
 
-    def __init__(self, config: LdapConnectionConfig, ca_bundle_builder):
+
+def set_admin_users(conn, config_id: int, users: list[str]) -> None:
+    from .settings import AppSettings
+    AppSettings(conn).set(f"admin_users_{config_id}", "\n".join(sorted({u.lower() for u in users if u})))
+
+
+class DomainAdminAuthenticator:
+    """Доменная учётная запись, входящая (прямо или через вложенные группы) в группу администраторов AD или указанная
+    в списке отдельных администраторов. Исключения LdapException (неверный пароль, блокировка, недоступность) — вызывающему."""
+
+    def __init__(self, config: LdapConnectionConfig, ca_bundle_builder, users: list[str] | None = None):
         self.config = config
         self.ca_bundle_builder = ca_bundle_builder
+        self.users = {u.lower() for u in users or []}
 
     def authenticate(self, username: str, password: str) -> bool:
         sam = username.strip(" \t\n\r\0\x0b")
@@ -85,7 +97,9 @@ class DomainAdminAuthenticator:
             user_dn = client.find_user_dn_by_sam_account_name(sam)
             if user_dn is None:
                 return False
-            return client.is_member_of_group_recursive(user_dn, self.config.admin_group_dn)
+            if sam.lower() in self.users:                    # пароль уже проверен bind-ом под самой учёткой
+                return True
+            return bool(self.config.admin_group_dn) and client.is_member_of_group_recursive(user_dn, self.config.admin_group_dn)
         finally:
             client.close()
 

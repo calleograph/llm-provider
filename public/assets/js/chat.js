@@ -671,6 +671,32 @@
     return actions;
   }
 
+  /* «Здесь не обезличено»: администратор видит отметку в «Аудите и DLP» и дополняет словарь или шаблоны. */
+  function flagButton(messageId) {
+    var button = el('button', 'gpt-msg-action', null);
+    button.type = 'button';
+    button.title = 'Сообщить администратору: в сообщении осталось что-то не обезличенное';
+    button.setAttribute('aria-label', button.title);
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    var path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M5 21V4m0 0h11l-2 4 2 4H5');
+    svg.appendChild(path);
+    button.appendChild(svg);
+    button.addEventListener('click', function () {
+      if (button.classList.contains('copied')) return;
+      request('POST', 'message_flag', form({ conversation_id: state.currentId, id: messageId })).then(function () {
+        button.classList.add('copied');
+        button.title = 'Отмечено — администратор проверит обезличивание';
+        button.setAttribute('aria-label', button.title);
+        showStatusToast('Спасибо: администратор увидит отметку и проверит, что не было скрыто.');
+      }).catch(function (error) { toast(error.message || 'Не удалось отправить отметку.'); });
+    });
+    return button;
+  }
+
   /*
    * Минимальный markdown-рендерер для ответов нейросети. Строит DOM
    * напрямую через createElement/textContent (никогда innerHTML) — весь
@@ -892,7 +918,9 @@
         : (message.unanonymized ? 'Отправлено без обезличивания' : 'Отправлено в обезличенном виде');
       var note = el('div', 'gpt-msg-note' + (message.unanonymized || options.skipAnonymization ? ' gpt-msg-note-danger' : ''), noteText);
       wrap.appendChild(note);
-      wrap.appendChild(buildMessageActions(message.content, 'Копировать сообщение'));
+      var userActions = buildMessageActions(message.content, 'Копировать сообщение');
+      if (message.can_flag && message.id && !message.unanonymized) userActions.appendChild(flagButton(message.id));
+      wrap.appendChild(userActions);
       wrap.setAttribute('data-user-msg', '1');
       wrap.setAttribute('data-preview', String(message.content || '').slice(0, 120));
     }

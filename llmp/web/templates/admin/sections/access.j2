@@ -40,6 +40,35 @@
 
 <hr class="sep">
 
+<p class="section-title">Отдельные администраторы</p>
+<p class="muted">Доменные учётные записи, которые входят в админку без членства в группе выше — например на время, пока группа не заведена.
+  Вход тем же доменным паролем. Учётка добавляется, только если она есть в каталоге (проверка под учётной записью для проверки).</p>
+{% if admin_users %}
+<ul class="access-users">
+{% for u in admin_users %}
+  <li><span class="mono">{{ u }}</span>
+    <form method="post" action="index.php?section=access&action=remove_admin_user" data-confirm-title="Убрать администратора?" data-confirm-text="{{ u }} больше не сможет войти в админку, если не состоит в группе администраторов.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="admin_user" value="{{ u }}">
+      <button class="btn btn-small" type="submit">Убрать</button>
+    </form></li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="muted">Список пуст — в админку входят только участники группы и локальный администратор.</p>
+{% endif %}
+<form method="post" action="index.php?section=access&action=add_admin_user">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-row">
+    <div class="field">
+      <label class="field-label" for="admin_user">Логин (без домена)</label>
+      <input class="text-input" id="admin_user" name="admin_user" autocomplete="off" required pattern="[A-Za-z0-9._\-]{1,64}">
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit"{% if not check_user %} disabled title="Сначала сохраните учётную запись для проверки"{% endif %}>Проверить и добавить</button>
+</form>
+
+<hr class="sep">
+
 <p class="section-title">Локальный аварийный администратор</p>
 <p class="muted">Логин: <strong>{{ local_username }}</strong>. Независим от Active Directory. Создание второго локального администратора не предусмотрено. Пароль меняется из уже подтверждённой административной сессии — старый пароль повторно не запрашивается.</p>
 <form method="post" action="index.php?section=access&action=change_local_admin_password">

@@ -1,12 +1,12 @@
-"""Раздел «Доступ к админ-панели» (перенос public/admin/sections/access.php): учётная запись для проверки и DN группы администраторов AD
-(группа проверяется в каталоге под этой учёткой) и пароль локального аварийного администратора."""
+"""Раздел «Доступ к админ-панели» (перенос public/admin/sections/access.php): учётная запись для проверки, DN группы администраторов AD
+(группа проверяется в каталоге под этой учёткой), отдельные доменные администраторы и пароль локального аварийного администратора."""
 
 from __future__ import annotations
 
 import hmac
 import re
 
-from ....auth import AdminSession, LocalAdminRepository
+from ....auth import AdminSession, LocalAdminRepository, admin_users, set_admin_users
 from ....ldap.client import LdapClient, LdapException
 from ..base import FORM_STALE, AdminPage
 
@@ -91,6 +91,47 @@ def _update_admin_group(page: AdminPage, active) -> None:
     page.flash_success = "DN группы администраторов обновлён." + warning
 
 
+def _admin_user(page: AdminPage, active) -> None:
+    """Отдельный администратор: добавляется только существующая в каталоге учётка (проверка под учёткой для проверки), удаляется сразу."""
+    m = page.module
+    user = page.post("admin_user").strip(_TRIM).lower()
+    users = admin_users(m.conn, active.id)
+    if page.action == "remove_admin_user":
+        if user in users:
+            set_admin_users(m.conn, active.id, [u for u in users if u != user])
+            m.audit.log(page.admin, page.ip, "admin_user_remove", True, "user=" + user)
+            page.flash_success = f"{user} больше не администратор (действующая сессия завершится не позже предельного срока)."
+        return
+    if not _SAM.fullmatch(user):
+        page.flash_error = "Укажите логин без домена, например ivanov."
+        return
+    if user in users:
+        page.flash_error = f"{user} уже в списке."
+        return
+    domain = m.domains.find(active.id)
+    if domain is None or not domain.has_service_account():
+        page.flash_error = "Сначала сохраните учётную запись для проверки (первый блок): без неё нельзя проверить, что учётка существует."
+        return
+    client = None
+    try:
+        client = LdapClient(active, m.ca_bundle_path())
+        client.connect()
+        client.bind(m.authenticator.service_principal(str(domain.service_username), active.domain), m.domains.service_password(active.id) or "")
+        found = client.find_user_dn_by_sam_account_name(user) is not None
+    except Exception as exc:  # noqa: BLE001
+        _fail(page, "admin_user_add", exc, "Не удалось проверить учётную запись: учётка для проверки не вошла в каталог. Проверьте её в первом блоке.")
+        return
+    finally:
+        if client is not None:
+            client.close()
+    if not found:
+        page.flash_error = f"Учётная запись {user} не найдена в каталоге. Список не изменён."
+        return
+    set_admin_users(m.conn, active.id, users + [user])
+    m.audit.log(page.admin, page.ip, "admin_user_add", True, "user=" + user)
+    page.flash_success = f"{user} добавлен в администраторы: входит в админку доменным паролем, способ входа «Доменная учётная запись»."
+
+
 def _change_local_password(page: AdminPage, admins: LocalAdminRepository) -> None:
     # повторный ввод прежнего пароля намеренно не нужен: из доменной сессии можно восстановить локальный доступ
     new, confirm = page.post("new_local_password"), page.post("confirm_local_password")
@@ -113,20 +154,23 @@ def handle(page: AdminPage) -> str:
     m = page.module
     admins = LocalAdminRepository(m.conn)
     active = m.ldap_configs.find_active()
-    if page.is_post("update_admin_group", "save_check_account"):
+    if page.is_post("update_admin_group", "save_check_account", "add_admin_user", "remove_admin_user"):
         if not page.csrf_ok():
             page.flash_error = FORM_STALE
         elif active is None:
             page.flash_error = "Нет активной конфигурации подключения."
         else:
-            (_update_admin_group if page.action == "update_admin_group" else _save_check_account)(page, active)
+            {"update_admin_group": _update_admin_group, "save_check_account": _save_check_account}.get(page.action, _admin_user)(page, active)
             active = m.ldap_configs.find_by_id(active.id)
     if page.is_post("change_local_admin_password"):
         if not page.csrf_ok():
             page.flash_error = FORM_STALE
         else:
             _change_local_password(page, admins)
+    if page.is_post("update_admin_group", "save_check_account", "add_admin_user", "remove_admin_user", "change_local_admin_password"):
+        return page.redirect_after_post()   # обновление страницы не должно повторять отправку формы
     page.page_title = "Доступ к админ-панели"
     domain = m.domains.find(active.id) if active is not None else None
     return page.render("admin/sections/access.j2", active=active, local_username=admins.username() or "",
-                       check_user=domain.service_username if domain and domain.has_service_account() else "")
+                       check_user=domain.service_username if domain and domain.has_service_account() else "",
+                       admin_users=admin_users(m.conn, active.id) if active is not None else [])

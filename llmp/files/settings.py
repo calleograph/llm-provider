@@ -19,6 +19,7 @@ DEFAULTS = {
     "tesseract_path": "/usr/bin/tesseract",
     "pdftotext_path": "/usr/bin/pdftotext",
     "pdftoppm_path": "/usr/bin/pdftoppm",
+    "catdoc_path": "/usr/bin/catdoc",
     "tool_timeout": "120",
 }
 _RANGES = {"max_upload_mb": (1, 200), "max_extracted_chars": (1000, 5000000), "ocr_max_pages": (1, 500), "tool_timeout": (5, 1800)}

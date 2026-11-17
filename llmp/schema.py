@@ -332,6 +332,9 @@ STEPS: list[tuple[str, ...]] = [
     ("sql", """CREATE INDEX IF NOT EXISTS idx_llm_outbound_owner ON llm_outbound(owner_key, created_at)"""),
     # Аудит и DLP (llmp/chat/dlp.py): важность срабатывания и разбор записи администратором.
     ("column", "llm_outbound", "dlp_severity INTEGER NOT NULL DEFAULT 0"),
+    # отметка пользователя «здесь не обезличено» (2.2.5) и связь сообщения с записью, ушедшей наружу
+    ("column", "llm_outbound", "user_flag_at TEXT"),
+    ("column", "llm_messages", "outbound_id INTEGER"),
     ("column", "llm_outbound", "review TEXT NOT NULL DEFAULT ''"),
     ("column", "llm_outbound", "reviewed_by TEXT"),
     ("column", "llm_outbound", "reviewed_at TEXT"),

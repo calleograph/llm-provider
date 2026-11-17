@@ -62,7 +62,8 @@ def handle(page: AdminPage) -> str:
     fs = m.file_settings
     tmp = paths.llm_tmp()
     tools = {label: ProcessRunner.is_executable(fs.get(key)) for label, key in
-             (("pdftotext", "pdftotext_path"), ("pdftoppm", "pdftoppm_path"), ("tesseract (OCR)", "tesseract_path"))}
+             (("pdftotext", "pdftotext_path"), ("pdftoppm", "pdftoppm_path"), ("tesseract (OCR)", "tesseract_path"),
+                                       ("catdoc (.doc)", "catdoc_path"))}
     page.page_title = "Состояние сервисов"
     return page.render(
         "admin/sections/services.j2", domain_rows=domain_rows, certs=certs, expired=sum(1 for e in expiries if e < now),
