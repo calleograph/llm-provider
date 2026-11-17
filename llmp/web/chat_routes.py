@@ -12,7 +12,7 @@ import tempfile
 import traceback
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
@@ -22,6 +22,7 @@ from ..chat import ChatException, ChatUser, session_current, session_login, sess
 from ..chat.service import ChatService
 from ..chat.settings import php_int
 from ..domain import ChatAuthenticator
+from ..files.docx_export import build_docx
 from ..ldap.client import LdapErrorCode as L, LdapException
 from ..logs import LlmEventLog
 from ..module import LlmModule
@@ -375,6 +376,16 @@ def _api(request: Request, c: Ctx, user: ChatUser, form: FormData | None):
                 },
                 "messages": conversations.messages(cid, owner),
             })
+
+        if route == "GET message_docx":
+            # ответ файлом Word: только из своего диалога; в файле — тот же обезличенный текст, что в истории
+            cid, mid = php_int(q.get("conversation_id", "0")), php_int(q.get("id", "0"))
+            message = next((m for m in conversations.messages(cid, owner) if m["id"] == mid), None)
+            if message is None:
+                return _error(404, "Сообщение не найдено.", "not_found")
+            stamp = str(message["created_at"])[:16].replace("T", "_").replace(":", "-")
+            return Response(build_docx(message["content"]), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            headers={"Content-Disposition": f'attachment; filename="answer_{stamp}.docx"', "Cache-Control": "no-store"})
 
         if route == "GET search":
             return json_response({"results": conversations.search(owner, q.get("q", ""))})

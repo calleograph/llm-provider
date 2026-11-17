@@ -263,3 +263,27 @@ def test_chat_script_pastes_screenshots_and_copies_both_message_kinds():
     assert "'Копировать сообщение'" in js and "'Копировать ответ'" in js
     actions = next(line for line in css.splitlines() if line.startswith(".gpt-msg-actions {"))
     assert "opacity: 0" not in actions
+
+
+def test_answer_downloads_as_word_only_from_own_conversation(web):
+    """Ответ файлом Word: настоящий .docx (заголовок, список, таблица, жирный), метки обезличивания как в истории; чужой id — 404."""
+    import io
+    import zipfile
+    web.login()
+    web.answer = "# Письмо\nУважаемый **[PERSON]**,\n- пункт один\n1. пункт два\n\n| Срок | Сумма |\n|---|---|\n| 5 дней | [сумма] |"
+    data = web.post("send", {"text": "Письмо для Иванов", "provider_id": str(web.provider_id)}).json()
+    cid, mid = data["conversation"]["id"], data["assistant_message"]["id"]
+    r = web.get("message_docx", conversation_id=str(cid), id=str(mid))
+    assert r.status_code == 200 and r.headers["content-disposition"].startswith('attachment; filename="answer_')
+    doc = zipfile.ZipFile(io.BytesIO(r.content)).read("word/document.xml").decode()
+    assert 'w:val="Heading1"' in doc and "<w:b/>" in doc and "<w:tbl>" in doc and "[PERSON]" in doc and "Иванов" not in doc
+    assert web.get("message_docx", conversation_id=str(cid), id="999").json()["code"] == "not_found"
+    assert web.get("message_docx", conversation_id="999", id=str(mid)).json()["code"] == "not_found"
+
+
+def test_own_anonymization_patterns_are_validated():
+    from llmp.anon.settings import AnonymizationSettings
+    ok = {"internal_profile": "basic", "internal_terms": "Альбатрос;project;\nre:\\bДОГ-\\d{6}\\b;doc_number;"}
+    assert "internal_terms" not in AnonymizationSettings.validate(ok)
+    assert "ошибка в регулярном" in AnonymizationSettings.validate({**ok, "internal_terms": "re:(ДОГ;custom;"})["internal_terms"]
+    assert "пустую строку" in AnonymizationSettings.validate({**ok, "internal_terms": "re:\\d*;custom;"})["internal_terms"]

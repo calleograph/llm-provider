@@ -627,7 +627,7 @@
     return Promise.resolve();
   }
 
-  function buildMessageActions(content, label) {
+  function buildMessageActions(content, label, messageId) {
     var actions = el('div', 'gpt-msg-actions');
     var copyButton = el('button', 'gpt-msg-action', null);
     copyButton.type = 'button';
@@ -649,6 +649,25 @@
       }).catch(function () { toast('Не удалось скопировать текст.'); });
     });
     actions.appendChild(copyButton);
+    if (messageId) {
+      // ответ файлом Word: сервер собирает .docx из этого же ответа (обезличенный текст, метки остаются как в чате)
+      var word = el('button', 'gpt-msg-action', null);
+      word.type = 'button';
+      word.title = 'Скачать ответ файлом Word';
+      word.setAttribute('aria-label', 'Скачать ответ файлом Word');
+      var ns = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      var path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 11v6M9 14l3 3 3-3');
+      svg.appendChild(path);
+      word.appendChild(svg);
+      word.addEventListener('click', function () {
+        location.href = API + '?action=message_docx&conversation_id=' + encodeURIComponent(state.currentId) + '&id=' + encodeURIComponent(messageId);
+      });
+      actions.appendChild(word);
+    }
     return actions;
   }
 
@@ -663,8 +682,9 @@
    * ответов LLM; полный CommonMark не требуется.
    */
   function renderInline(container, text) {
-    // Последняя альтернатива — метка обезличивания вида «[телефон 1]», «[адрес]», «[IP 2]»: только оформление, текст не меняется.
-    var pattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s()]+)\)|(\*\*|__)([^\n]+?)\3|(`+)([^\n]+?)\5|(\*|_)([^\n]+?)\7|\[((?:IP|[а-яё][а-яё-]*)(?: [А-ЯЁа-яё-]+)?(?: \d{1,4})?)\](?!\()/;
+    // Метки обезличивания — только оформление, текст не меняется: «[телефон 1]», «[адрес]», «[IP 2]» и обозначения без скобок,
+    // которые ставит движок: «Виктор П.» вместо ФИО (в любом падеже), «Организация 2», «Проект 1», «Лицо 3».
+    var pattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s()]+)\)|(\*\*|__)([^\n]+?)\3|(`+)([^\n]+?)\5|(\*|_)([^\n]+?)\7|\[((?:IP|[а-яё][а-яё-]*)(?: [А-ЯЁа-яё-]+)?(?: \d{1,4})?)\](?!\()|(?<![А-ЯЁа-яё])((?:[А-ЯЁ][а-яё]{1,20} [А-ЯЁ][а-яё]{0,2}\.(?![А-ЯЁа-яё]))|(?:Организаци(?:я|и|ю|ей)|Мест(?:о|а|у|ом|е)|Проект(?:а|у|ом|е)?|Лиц(?:о|а|у|ом|е)|Участник(?:а|у|ом|е)?) \d{1,4}(?!\d))/;
     var rest = String(text || '');
     while (rest !== '') {
       var m = pattern.exec(rest);
@@ -692,7 +712,10 @@
       } else if (m[9] !== undefined) {
         var mask = el('span', 'gpt-mask', m[0]);
         mask.title = 'Обезличенные данные: исходное значение не покидало сервер компании';
-        container.appendChild(mask);
+        container.appendChild(mask);      } else if (m[10] !== undefined) {
+        var alias = el('span', 'gpt-mask gpt-mask-alias', m[10]);
+        alias.title = 'Обозначение вместо настоящего имени или названия: исходное значение не покидало сервер компании';
+        container.appendChild(alias);
       }
       rest = rest.slice(m.index + m[0].length);
     }
@@ -849,6 +872,9 @@
     }
     var body = el('div', 'gpt-msg-body');
     renderText(body, message.content);
+    if (message.unanonymized) {   // отправлено без обезличивания — «Иван П.» написал сам пользователь, это не замена
+      Array.prototype.forEach.call(body.querySelectorAll('.gpt-mask-alias'), function (a) { a.replaceWith(a.textContent); });
+    }
     wrap.appendChild(body);
     if (tokenLine) wrap.appendChild(tokenLine);
     if (message.code === 'storage_quota_exceeded') {
@@ -858,7 +884,7 @@
       wrap.appendChild(goToCleanup);
     }
     if (role === 'assistant') {
-      wrap.appendChild(buildMessageActions(message.content, 'Копировать ответ'));
+      wrap.appendChild(buildMessageActions(message.content, 'Копировать ответ', message.id));
     }
     if (role === 'user') {
       var noteText = options.pending

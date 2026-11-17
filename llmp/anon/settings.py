@@ -124,4 +124,15 @@ class AnonymizationSettings:
             text = str(values.get(field, ""))
             if len(_NEWLINE.split(text)) > max_lines or len(text) > 500000:
                 errors[field] = f"Не больше {max_lines} строк."
+        for line in _lines(str(values.get("internal_terms", ""))):
+            pattern = php_trim(line.split(";")[0])
+            if pattern.startswith("re:"):
+                try:
+                    rx = re.compile(pattern[3:], re.I)
+                except re.error as e:
+                    errors["internal_terms"] = f"Шаблон «{pattern[:60]}»: ошибка в регулярном выражении ({e.msg})."
+                    break
+                if pattern[3:].strip() == "" or rx.fullmatch(""):
+                    errors["internal_terms"] = f"Шаблон «{pattern[:60]}» находит пустую строку — уточните его."
+                    break
         return errors

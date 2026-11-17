@@ -174,6 +174,17 @@ def test_custom_replacement_and_exceptions():
     assert out == "Перенесли внутренняя CRM на новый сервер. внутренняя CRM хватит до мая. Иванов Иван доволен."
 
 
+
+def test_regex_terms_replace_own_numbers_and_bad_pattern_fails_closed():
+    """«re:…» в словаре — свой шаблон: номера договоров получают согласованные обозначения, регистр не важен, своя замена работает."""
+    terms = [Term(r"re:\bДОГ-\d{6}\b", "doc_number"), Term(r"re:\bТН-\d{5}\b", "custom", "табельный номер")]
+    out = run("По договору ДОГ-123456 и дог-654321, снова ДОГ-123456; сотрудник ТН-12345. ДОГ-1234567 — не наш формат.", terms=terms, people=[])
+    assert not re.search(r"ДОГ-123456\b|654321|ТН-12345", out, re.I)
+    assert out.count("[номер 1]") == 2 and "[номер 2]" in out and "табельный номер" in out and "ДОГ-1234567" in out
+    with pytest.raises(re.error):
+        run("текст", terms=[Term("re:(", "custom")], people=[])
+
+
 # --------------------------------------------------------------------------------------------------- протокол целиком
 PROTOCOL = """Протокол совещания по переносу CRM
 Дата: 14 октября 2026 г.

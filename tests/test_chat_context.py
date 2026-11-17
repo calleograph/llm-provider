@@ -127,9 +127,12 @@ def test_chunk_slices_long_paragraph_like_php_loop():
 
 # ---- сверка с PHP-реализацией ----
 
-def test_context_builder_matches_php_output():
+def test_context_builder_matches_php_output(monkeypatch):
     """Те же входы — тот же system, messages, report и флаги, что у PHP ContextBuilder.
-    data/context_builder_php.json записан версией 1.x 1.x перед её удалением (входы и её ответы)."""
+    data/context_builder_php.json записан версией 1.x 1.x перед её удалением (входы и её ответы).
+    Сверяется логика сборки, поэтому базовые правила — текстом 1.x (подсказки про выгрузку в Word, 2.2.4, там не было)."""
+    from llmp import prompt
+    monkeypatch.setattr(prompt, "BASE", prompt.BASE.split("\nПод каждым твоим ответом")[0])
     golden = json.loads((Path(__file__).parent / "data" / "context_builder_php.json").read_text())
 
     def blocks(system: str) -> tuple[str, list[str]]:

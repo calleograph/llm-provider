@@ -91,8 +91,9 @@
   <div class="form-row">
     <div class="field">
       <label class="field-label" for="internal_terms">Словарь организации: «термин;категория;замена»{{ setting_code('ANON_TERMS') }}</label>
-      <textarea class="text-input mono" id="internal_terms" name="internal_terms" rows="6" placeholder="Альбатрос;project;&#10;Иванов Пётр;person;Руководитель&#10;CRM;project;Система учёта">{{ field('internal_terms') }}</textarea>
-      <p class="muted llm-note">Категории: project, organization, person, location, host, custom. Слово узнаётся в любой форме. Пустая замена — обозначение категории.</p>
+      <textarea class="text-input mono" id="internal_terms" name="internal_terms" rows="6" placeholder="Альбатрос;project;&#10;Иванов Пётр;person;Руководитель&#10;CRM;project;Система учёта&#10;re:\bДОГ-\d{6}\b;doc_number;">{{ field('internal_terms') }}</textarea>
+      <p class="muted llm-note">Категории: project, organization, person, location, host, doc_number, custom. Слово узнаётся в любой форме. Пустая замена — обозначение категории.
+        Строка с <code>re:</code> в начале — свой шаблон (регулярное выражение, регистр не важен, без «;»): например <code>re:\bДОГ-\d{6}\b;doc_number;</code> заменит номера договоров ДОГ-123456 на «[номер 1]». После сохранения проверьте шаблон в блоке «Проверка: что уйдёт в нейросеть» ниже.</p>
       {{ err(field_errors, 'internal_terms') }}
     </div>
     <div class="field">

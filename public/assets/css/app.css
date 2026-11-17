@@ -169,6 +169,8 @@ hr.sep { margin: var(--s6) 0; border: 0; border-top: 1px solid var(--line); }
   white-space: nowrap;
   vertical-align: baseline;
 }
+/* обозначение без скобок («Виктор П.», «Организация 2») — обычный шрифт текста, чтобы читалось как имя, но видно, что это замена */
+.gpt-mask-alias { font: inherit; padding: 0 2px; }
 
 /* ---------- Поля и подписи ---------- */
 .field { min-width: 0; }

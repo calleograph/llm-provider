@@ -241,7 +241,11 @@ class Anonymizer:
         # слова ФИО участников, которых нет в словаре (латиница, редкие фамилии): повторная проверка дозаменяет их, даже если разбор имени их не узнал
         self._odd_words = {w.lower() for p in participants for w in nm._WORD.findall(p)
                            if len(w) > 2 and w[:1].isupper() and not nm.morph().word_is_known(w.lower())} if policy.use_ner and policy.action("person") != "keep" else set()
-        self._term_lemmas = [(t, tuple(w for _, _, w in _lemmas(t.term, policy.use_ner))) for t in policy.terms if t.term.strip()]
+        # «re:выражение» — свой шаблон (номера договоров, дел, табельные): регистр не важен. Ошибка в выражении — сбой обработки и
+        # блокировка отправки, а не тихий пропуск правила (админка не даёт сохранить недопустимое выражение).
+        self._term_patterns = [(t, re.compile(t.term[3:], re.I)) for t in policy.terms if t.term.startswith("re:") and t.term[3:].strip()]
+        self._term_lemmas = [(t, tuple(w for _, _, w in _lemmas(t.term, policy.use_ner))) for t in policy.terms
+                             if t.term.strip() and not t.term.startswith("re:")]
         self._exceptions = [tuple(w for _, _, w in _lemmas(e, policy.use_ner)) for e in policy.exceptions if e.strip()]
 
     # --------------------------------------------------------------------------------------- поиск
@@ -250,11 +254,15 @@ class Anonymizer:
         return all(lem[k] in toks[i + k][2] for k in range(len(lem)))
 
     def _term_of(self, text: str):
+        term = next((t for t, rx in self._term_patterns if rx.fullmatch(text)), None)
+        if term is not None:
+            return term
         toks = _forms(text, self.policy.use_ner)
         return next((t for t, lem in self._term_lemmas if len(lem) == len(toks) and self._seq(toks, 0, lem)), None)
 
     def _dictionary(self, text: str, toks) -> list[Found]:
-        out = []
+        out = [Found(m.start(), m.end(), t.category if t.category in CATEGORIES else "custom", "dictionary")
+               for t, rx in self._term_patterns for m in rx.finditer(text) if m.end() > m.start()]
         for term, lem in self._term_lemmas:
             n = len(lem)
             if not n:
@@ -558,7 +566,9 @@ class Anonymizer:
                     continue
             elif f.rule == "dictionary":
                 term = self._term_of(orig)
-                rep = term.replacement if term is not None and term.replacement else self._label(f.category, term.term if term is not None else orig)
+                # номер обозначения — по слову словаря (все формы одного термина — одно обозначение), а для шаблона — по найденному значению
+                key = term.term if term is not None and not term.term.startswith("re:") else orig
+                rep = term.replacement if term is not None and term.replacement else self._label(f.category, key)
             else:
                 rep = self._label(f.category, orig)
             if f.category in _BARE and rep.split(" ")[0] in ("Организация", "Место", "Проект"):     # «с Организацией 1», «по Проекту 2»
