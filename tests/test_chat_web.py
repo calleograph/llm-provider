@@ -270,13 +270,15 @@ def test_answer_downloads_as_word_only_from_own_conversation(web):
     import io
     import zipfile
     web.login()
-    web.answer = "# Письмо\nУважаемый **[PERSON]**,\n- пункт один\n1. пункт два\n\n| Срок | Сумма |\n|---|---|\n| 5 дней | [сумма] |"
+    web.answer = ("# Письмо\nУважаемый **[PERSON]**,\n- пункт один\n1. пункт два\n\n| Срок | Сумма |\n|---|---|\n| 5 дней | [сумма] |\n\n"
+                  "Чтобы скачать письмо, нажмите кнопку «Скачать ответ файлом Word» под ответом.")
     data = web.post("send", {"text": "Письмо для Иванов", "provider_id": str(web.provider_id)}).json()
     cid, mid = data["conversation"]["id"], data["assistant_message"]["id"]
     r = web.get("message_docx", conversation_id=str(cid), id=str(mid))
-    assert r.status_code == 200 and r.headers["content-disposition"].startswith('attachment; filename="answer_')
+    assert r.status_code == 200 and "filename*=UTF-8''%D0%9F%D0%B8%D1%81%D1%8C%D0%BC%D0%BE.docx" in r.headers["content-disposition"]   # «Письмо.docx»
     doc = zipfile.ZipFile(io.BytesIO(r.content)).read("word/document.xml").decode()
     assert 'w:val="Heading1"' in doc and "<w:b/>" in doc and "<w:tbl>" in doc and "[PERSON]" in doc and "Иванов" not in doc
+    assert "кнопку" not in doc, "напоминание чата про кнопку — не часть документа"
     assert web.get("message_docx", conversation_id=str(cid), id="999").json()["code"] == "not_found"
     assert web.get("message_docx", conversation_id="999", id=str(mid)).json()["code"] == "not_found"
 

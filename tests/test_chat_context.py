@@ -132,7 +132,7 @@ def test_context_builder_matches_php_output(monkeypatch):
     data/context_builder_php.json записан версией 1.x 1.x перед её удалением (входы и её ответы).
     Сверяется логика сборки, поэтому базовые правила — текстом 1.x (подсказки про выгрузку в Word, 2.2.4, там не было)."""
     from llmp import prompt
-    monkeypatch.setattr(prompt, "BASE", prompt.BASE.split("\nПод каждым твоим ответом")[0])
+    monkeypatch.setattr(prompt, "BASE", prompt.BASE.split("\nЧат сам превращает твой ответ")[0])
     golden = json.loads((Path(__file__).parent / "data" / "context_builder_php.json").read_text())
 
     def blocks(system: str) -> tuple[str, list[str]]:

@@ -10,6 +10,7 @@ import random
 import re
 import tempfile
 import traceback
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -22,7 +23,7 @@ from ..chat import ChatException, ChatUser, session_current, session_login, sess
 from ..chat.service import ChatService
 from ..chat.settings import php_int
 from ..domain import ChatAuthenticator
-from ..files.docx_export import build_docx
+from ..files.docx_export import build_docx, title_of
 from ..ldap.client import LdapErrorCode as L, LdapException
 from ..logs import LlmEventLog
 from ..module import LlmModule
@@ -391,9 +392,9 @@ def _api(request: Request, c: Ctx, user: ChatUser, form: FormData | None):
             message = next((m for m in conversations.messages(cid, owner) if m["id"] == mid), None)
             if message is None:
                 return _error(404, "Сообщение не найдено.", "not_found")
-            stamp = str(message["created_at"])[:16].replace("T", "_").replace(":", "-")
+            name = quote(title_of(message["content"]) + ".docx")   # кириллица в имени — по RFC 5987, запасное имя — латиницей
             return Response(build_docx(message["content"]), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            headers={"Content-Disposition": f'attachment; filename="answer_{stamp}.docx"', "Cache-Control": "no-store"})
+                            headers={"Content-Disposition": f"attachment; filename=\"document.docx\"; filename*=UTF-8''{name}", "Cache-Control": "no-store"})
 
         if route == "GET search":
             return json_response({"results": conversations.search(owner, q.get("q", ""))})

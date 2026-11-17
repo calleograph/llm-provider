@@ -663,12 +663,44 @@
       path.setAttribute('d', 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 11v6M9 14l3 3 3-3');
       svg.appendChild(path);
       word.appendChild(svg);
-      word.addEventListener('click', function () {
-        location.href = API + '?action=message_docx&conversation_id=' + encodeURIComponent(state.currentId) + '&id=' + encodeURIComponent(messageId);
-      });
+      word.addEventListener('click', function () { downloadDocx(messageId); });
       actions.appendChild(word);
     }
     return actions;
+  }
+
+  function downloadDocx(messageId) {
+    location.href = API + '?action=message_docx&conversation_id=' + encodeURIComponent(state.currentId) + '&id=' + encodeURIComponent(messageId);
+  }
+
+  // просили файлом («выдай в doc», «пришли файлом word») — ответ показывается и как готовый документ, а не только иконкой под ним
+  var WANTS_FILE = /(^|[^a-zа-яё])(word|docx?|ворд[а-яё]*|файлом)(?![a-zа-яё])/i;
+
+  function docxTitle(markdown) {
+    var lines = String(markdown || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    var first = lines.filter(function (l) { return l.charAt(0) === '#'; })[0] || lines[0] || '';
+    return (first.replace(/[\\/:*?"<>|#*_`]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Документ') + '.docx';
+  }
+
+  function fileCard(message) {
+    var card = el('div', 'gpt-file-card');
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    var path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6');
+    svg.appendChild(path);
+    var text = el('div', 'gpt-file-card-text');
+    text.appendChild(el('div', 'gpt-file-card-name', docxTitle(message.content)));
+    text.appendChild(el('div', 'gpt-file-card-meta', 'Документ Word'));
+    var button = el('button', 'btn btn-small btn-primary', 'Скачать');
+    button.type = 'button';
+    button.addEventListener('click', function () { downloadDocx(message.id); });
+    card.appendChild(svg);
+    card.appendChild(text);
+    card.appendChild(button);
+    return card;
   }
 
   /* «Здесь не обезличено»: администратор видит отметку в «Аудите и DLP» и дополняет словарь или шаблоны. */
@@ -910,8 +942,10 @@
       wrap.appendChild(goToCleanup);
     }
     if (role === 'assistant') {
+      if (message.id && WANTS_FILE.test(state.lastUserText || '')) wrap.appendChild(fileCard(message));
       wrap.appendChild(buildMessageActions(message.content, 'Копировать ответ', message.id));
     }
+    if (role === 'user') state.lastUserText = String(message.content || '');
     if (role === 'user') {
       var noteText = options.pending
         ? (options.skipAnonymization ? 'Отправка без обезличивания…' : 'Отправка…')

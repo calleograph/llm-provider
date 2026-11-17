@@ -765,6 +765,13 @@ h4.gpt-heading, h5.gpt-heading, h6.gpt-heading { font-size: var(--fs-16); }
 .gpt-msg-body a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); }
 .gpt-msg-body a:hover { text-decoration-color: currentColor; }
 .gpt-chip { display: inline-flex; align-self: flex-end; align-items: center; gap: var(--s1); margin-bottom: var(--s2); padding: 0 var(--s2); border: 1px solid var(--line); border-radius: var(--r-xs); color: var(--muted); font-size: var(--fs-12); font-weight: 500; line-height: 24px; }
+/* ответ, который просили файлом: карточка документа с кнопкой «Скачать» */
+.gpt-file-card { display: flex; align-items: center; gap: var(--s3); max-width: 480px; margin-top: var(--s3); padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--soft); }
+.gpt-file-card svg { flex: none; width: 32px; height: 32px; fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gpt-file-card-text { flex: 1; min-width: 0; }
+.gpt-file-card-name { display: -webkit-box; overflow: hidden; font-size: var(--fs-14); font-weight: 600; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.gpt-file-card-meta { color: var(--muted); font-size: var(--fs-12); }
+.gpt-file-card .btn { flex: none; min-height: 40px; }
 
 /* расход токенов под ответом */
 .gpt-msg-tokens { margin-top: var(--s2); color: var(--muted); font-size: var(--fs-12); }

@@ -123,7 +123,20 @@ _PARTS = {
 }
 
 
+# напоминание «нажмите кнопку…» из ответов 2.2.4 — служебная фраза чата, а не часть документа
+_BUTTON_HINT = re.compile(r"\n[^\n]*(?:Скачать ответ файлом Word|кнопк\w* под ответом)[^\n]*\s*\Z", re.I)
+
+
+def title_of(markdown: str) -> str:
+    """Имя файла по содержанию: первый заголовок, иначе первая строка; без символов, недопустимых в именах файлов."""
+    lines = [ln.strip() for ln in markdown.splitlines() if ln.strip()]
+    first = next((ln for ln in lines if ln.startswith("#")), lines[0] if lines else "")
+    name = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+|[#*_`]+", " ", first)
+    return re.sub(r"\s+", " ", name).strip(" .")[:80] or "Документ"
+
+
 def build_docx(markdown: str) -> bytes:
+    markdown = _BUTTON_HINT.sub("", markdown.rstrip())
     document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document {_W}><w:body>{_body(markdown)}'
                 '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" '
                 'w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>')
